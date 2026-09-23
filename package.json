@@ -1,0 +1,25 @@
+{
+  "name": "gym-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts",
+    "db:migrate": "wrangler d1 migrations apply gym-tracker --remote",
+    "db:migrate:local": "wrangler d1 migrations apply gym-tracker --local"
+  },
+  "dependencies": {
+    "hono": "^4.13.8",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260923.1",
+    "@types/node": "^22.20.4",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.137.0"
+  }
+}
