@@ -1,4 +1,4 @@
-# Gym Tracker
+# Arif Gym Tracker
 
 Log workout sets on a touch screen built for the gym floor, then track your progress on a web dashboard.
 

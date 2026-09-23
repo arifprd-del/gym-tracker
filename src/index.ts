@@ -196,8 +196,8 @@ app.post("/api/exercises/remove", async (c) => {
 app.get("/manifest.webmanifest", (c) =>
   c.json(
     {
-      name: "Gym Tracker",
-      short_name: "Gym",
+      name: "Arif Gym Tracker",
+      short_name: "Arif Gym",
       start_url: "/log",
       display: "standalone",
       background_color: "#0f1115",

@@ -401,7 +401,7 @@ export function logPage(data: LogPageData) {
   // JSON inside a script tag: escape "<" so a name like "</script>" cannot end the tag early.
   const json = JSON.stringify(data).replace(/</g, "\\u003c");
   return layout(
-    "Log",
+    "Log · Arif Gym Tracker",
     html`<main class="log">
         <header>
           <h1>Log</h1>

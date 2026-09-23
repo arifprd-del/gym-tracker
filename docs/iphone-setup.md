@@ -1,8 +1,8 @@
 # Using it on your iPhone
 
 1. Open `https://gym-tracker.<you>.workers.dev/log` in **Safari** and sign in with your dashboard password.
-2. Tap **Share → Add to Home Screen** and name it **Gym**.
-3. Open **Gym** from your Home Screen and sign in once more. iOS keeps Home Screen apps separate from Safari. After that
+2. Tap **Share → Add to Home Screen** and name it **Arif Gym**.
+3. Open **Arif Gym** from your Home Screen and sign in once more. iOS keeps Home Screen apps separate from Safari. After that
    you stay signed in as long as you use it.
 
 ## Logging a set

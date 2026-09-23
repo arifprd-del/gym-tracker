@@ -41,7 +41,7 @@ const styles = `
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 h1 { font-size: 22px; margin: 0; white-space: nowrap; }
 h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; overflow-x: auto; }
@@ -54,7 +54,7 @@ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line
 th { color: var(--muted); font-weight: 600; font-size: 13px; }
 td.num, th.num { text-align: right; }
 tr.day td { color: var(--muted); font-size: 13px; font-weight: 600; padding-top: 14px; }
-button, .button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 6px 14px; cursor: pointer; text-decoration: none; }
+button, .button { white-space: nowrap; font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 6px 14px; cursor: pointer; text-decoration: none; }
 button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.link { border: 0; background: none; color: var(--danger); padding: 2px 6px; font-size: 13px; }
 .muted { color: var(--muted); }
@@ -92,7 +92,7 @@ export function layout(title: string, body: Html, head: Html | string = ""): Htm
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="robots" content="noindex" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-title" content="Gym" />
+        <meta name="apple-mobile-web-app-title" content="Arif Gym" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <link rel="manifest" href="/manifest.webmanifest" />
         <title>${title}</title>
@@ -109,9 +109,9 @@ export function layout(title: string, body: Html, head: Html | string = ""): Htm
 
 export function loginPage(error?: string, next = "/"): Html {
   return layout(
-    "Gym Tracker",
+    "Arif Gym Tracker",
     html`<main class="login card">
-      <h1>Gym Tracker</h1>
+      <h1>Arif Gym Tracker</h1>
       <form method="post" action="/login">
         <input type="hidden" name="next" value="${next}" />
         <input type="password" name="password" placeholder="Password" autocomplete="current-password" required autofocus />
@@ -409,10 +409,10 @@ export function dashboardPage(data: DashboardData): Html {
   });
 
   return layout(
-    "Gym Tracker",
+    "Arif Gym Tracker",
     html`<main>
       <header>
-        <h1>Gym Tracker</h1>
+        <h1>Arif Gym Tracker</h1>
         <div class="row">
           <a class="button primary" href="/log">Log a set</a>
           <a class="button" href="/export.csv">Export CSV</a>
