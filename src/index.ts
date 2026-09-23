@@ -5,25 +5,24 @@ import {
   SESSION_COOKIE,
   SESSION_DAYS,
   createSession,
-  hasValidBearer,
   isValidSession,
   safeEqual,
   safeNextPath,
   sessionNeedsRefresh,
 } from "./auth";
 import {
+  SPLIT_DAYS,
   addDays,
   dayLookup,
-  describeDay,
-  describeLoggedSet,
   displayName,
-  localDay,
-  normalizeExercise,
+  formatLoad,
   lastTrained,
-  spokenLoad,
+  localDay,
+  loggedSetMessage,
+  normalizeExercise,
   summarizeSets,
-  weekStart,
   trainingDaysByType,
+  weekStart,
   weekStreak,
   weeklyVolumeByDay,
   type SetRow,
@@ -33,49 +32,11 @@ import { dashboardPage, loginPage, type ExerciseRecord } from "./views";
 
 type Env = {
   DB: D1Database;
-  API_TOKEN: string;
   DASHBOARD_PASSWORD: string;
   TIMEZONE: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Input parsing. Shortcuts may send numbers as text, and some locales dictate "82,5" instead of "82.5".
-
-// Blank values become undefined, so optional and defaulted fields must declare that on the inner schema.
-const number = <T extends z.ZodType>(schema: T) =>
-  z.preprocess((v) => {
-    if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) return undefined;
-    return typeof v === "string" ? Number(v.trim().replace(",", ".")) : v;
-  }, schema);
-
-const optionalText = (max: number) =>
-  z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().trim().max(max).optional());
-
-const logSchema = z.object({
-  exercise: z.string().trim().min(1).max(80),
-  weight: number(z.number().min(0).max(1000).default(0)),
-  reps: number(z.number().int().min(1).max(200)),
-  rpe: number(z.number().min(1).max(10).optional()),
-  note: optionalText(500),
-});
-
-const repeatSchema = z.object({
-  weight: number(z.number().min(0).max(1000).optional()),
-  reps: number(z.number().int().min(1).max(200).optional()),
-});
-
-async function readBody(c: Context): Promise<Record<string, unknown>> {
-  const type = c.req.header("content-type") ?? "";
-  try {
-    if (type.includes("application/json")) return ((await c.req.json()) as Record<string, unknown>) ?? {};
-    if (type.includes("form")) return (await c.req.parseBody()) as Record<string, unknown>;
-  } catch {
-    // Fall through: an unreadable body is treated as empty and fails validation with a spoken message.
-  }
-  return {};
-}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Database helpers
@@ -93,26 +54,6 @@ async function setsToday(db: D1Database, timeZone: string, exercise?: string): P
   return results.filter((s) => localDay(s.performed_at, timeZone) === today);
 }
 
-async function logSet(env: Env, input: { exercise: string; weight: number; reps: number; rpe?: number; note?: string }) {
-  const exercise = normalizeExercise(input.exercise);
-  const previous = await env.DB.prepare("SELECT MAX(weight_kg) AS best FROM sets WHERE exercise = ?")
-    .bind(exercise)
-    .first<{ best: number | null }>();
-  const set = await env.DB.prepare(
-    "INSERT INTO sets (exercise, weight_kg, reps, rpe, note) VALUES (?, ?, ?, ?, ?) RETURNING *",
-  )
-    .bind(exercise, input.weight, input.reps, input.rpe ?? null, input.note ?? null)
-    .first<SetRow>();
-  if (!set) throw new Error("Insert returned no row");
-  const setNumber = (await setsToday(env.DB, env.TIMEZONE, exercise)).length;
-  const previousBest = previous?.best ?? null;
-  return {
-    say: describeLoggedSet(set, previousBest, setNumber),
-    personalBest: previousBest !== null && set.weight_kg > previousBest,
-    set,
-  };
-}
-
 async function setSessionCookie(c: Context<{ Bindings: Env }>) {
   setCookie(c, SESSION_COOKIE, await createSession(c.env.DASHBOARD_PASSWORD), {
     httpOnly: true,
@@ -124,74 +65,62 @@ async function setSessionCookie(c: Context<{ Bindings: Env }>) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// API for Siri Shortcuts and the /log page. Shortcuts send the Bearer token; the page uses the signed-in session.
-// Every response has a `say` field a Shortcut can pass straight to "Speak Text".
+// JSON API used by the /log page. It needs the signed-in session, and every response has a `message` to show.
 
 app.use("/api/*", async (c, next) => {
-  const bearer = await hasValidBearer(c.req.header("authorization"), c.env.API_TOKEN);
-  if (!bearer && !(await isValidSession(getCookie(c, SESSION_COOKIE), c.env.DASHBOARD_PASSWORD))) {
-    return c.json({ say: "The gym tracker did not accept the Shortcut's token." }, 401);
+  if (!(await isValidSession(getCookie(c, SESSION_COOKIE), c.env.DASHBOARD_PASSWORD))) {
+    return c.json({ message: "You're signed out." }, 401);
+  }
+  // Only the page's own fetch() calls send JSON; a form on another site cannot, which blocks cross-site posts.
+  if (!c.req.header("content-type")?.includes("application/json")) {
+    return c.json({ message: "Expected JSON." }, 415);
   }
   await next();
 });
 
+async function readJson(c: Context): Promise<unknown> {
+  return c.req.json().catch(() => ({}));
+}
+
+const logSchema = z.object({
+  exercise: z.string().trim().min(1).max(80),
+  weight: z.number().min(0).max(1000),
+  reps: z.number().int().min(1).max(200),
+});
+
 app.post("/api/log", async (c) => {
-  const parsed = logSchema.safeParse(await readBody(c));
-  if (!parsed.success) {
-    return c.json({ say: "I didn't catch that set. I need an exercise and a number of reps.", issues: parsed.error.issues }, 400);
-  }
-  return c.json(await logSet(c.env, parsed.data));
+  const parsed = logSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ message: "Check the exercise, weight and reps." }, 400);
+  const exercise = normalizeExercise(parsed.data.exercise);
+  const previous = await c.env.DB.prepare("SELECT MAX(weight_kg) AS best FROM sets WHERE exercise = ?")
+    .bind(exercise)
+    .first<{ best: number | null }>();
+  const set = await c.env.DB.prepare("INSERT INTO sets (exercise, weight_kg, reps) VALUES (?, ?, ?) RETURNING *")
+    .bind(exercise, parsed.data.weight, parsed.data.reps)
+    .first<SetRow>();
+  if (!set) throw new Error("Insert returned no row");
+  const setNumber = (await setsToday(c.env.DB, c.env.TIMEZONE, exercise)).length;
+  const previousBest = previous?.best ?? null;
+  const personalBest = previousBest !== null && set.weight_kg > previousBest;
+  return c.json({ message: loggedSetMessage(set, setNumber, personalBest), personalBest, set });
 });
 
-// Logs the most recent set again, optionally with a new weight or rep count ("same again", "same but 6 reps").
-app.post("/api/repeat", async (c) => {
-  const parsed = repeatSchema.safeParse(await readBody(c));
-  if (!parsed.success) return c.json({ say: "I didn't catch the new weight or reps." }, 400);
-  const last = await c.env.DB.prepare("SELECT * FROM sets ORDER BY id DESC LIMIT 1").first<SetRow>();
-  if (!last) return c.json({ say: "There is no previous set to repeat yet." }, 404);
-  return c.json(
-    await logSet(c.env, {
-      exercise: last.exercise,
-      weight: parsed.data.weight ?? last.weight_kg,
-      reps: parsed.data.reps ?? last.reps,
-    }),
-  );
-});
-
-// Removes the most recent set, for when Siri mishears.
+// Removes the most recent set, for a mis-tap.
 app.post("/api/undo", async (c) => {
   const removed = await c.env.DB.prepare("DELETE FROM sets WHERE id = (SELECT MAX(id) FROM sets) RETURNING *").first<SetRow>();
-  if (!removed) return c.json({ say: "There is nothing to undo." }, 404);
-  return c.json({
-    say: `Removed ${displayName(removed.exercise)}, ${spokenLoad(removed)}.`,
-    removed,
-  });
+  if (!removed) return c.json({ message: "There is nothing to undo." }, 404);
+  return c.json({ message: `Removed ${displayName(removed.exercise)} ${formatLoad(removed)}`, removed });
 });
-
-app.get("/api/today", async (c) => {
-  const summary = summarizeSets(await setsToday(c.env.DB, c.env.TIMEZONE));
-  return c.json({ say: describeDay(summary), summary });
-});
-
-// Exercise names, most recently used first, for a "Choose from List" step in the Shortcut.
-app.get("/api/exercises", async (c) => {
-  const { results } = await c.env.DB.prepare(
-    "SELECT exercise FROM sets GROUP BY exercise ORDER BY MAX(performed_at) DESC LIMIT 50",
-  ).all<{ exercise: string }>();
-  return c.json({ exercises: results.map((r) => displayName(r.exercise)) });
-});
-
-const DAYS = ["push", "pull", "legs"] as const;
 
 const exerciseSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  day: z.enum(DAYS),
+  day: z.enum(SPLIT_DAYS),
 });
 
 // Adds an exercise button to a day on the /log page (or moves it there if it already exists).
 app.post("/api/exercises", async (c) => {
-  const parsed = exerciseSchema.safeParse(await readBody(c));
-  if (!parsed.success) return c.json({ say: "I need an exercise name and a day." }, 400);
+  const parsed = exerciseSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ message: "Enter an exercise name." }, 400);
   const name = normalizeExercise(parsed.data.name);
   await c.env.DB.prepare(
     `INSERT INTO exercises (name, day, position)
@@ -200,16 +129,16 @@ app.post("/api/exercises", async (c) => {
   )
     .bind(name, parsed.data.day)
     .run();
-  return c.json({ say: `Added ${displayName(name)}.`, exercise: { name, day: parsed.data.day } });
+  return c.json({ message: `Added ${displayName(name)}`, exercise: { name, day: parsed.data.day } });
 });
 
 // Removes an exercise button. Logged sets for it are kept.
 app.post("/api/exercises/remove", async (c) => {
-  const parsed = exerciseSchema.pick({ name: true }).safeParse(await readBody(c));
-  if (!parsed.success) return c.json({ say: "I need an exercise name." }, 400);
+  const parsed = exerciseSchema.pick({ name: true }).safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ message: "Enter an exercise name." }, 400);
   const name = normalizeExercise(parsed.data.name);
   await c.env.DB.prepare("DELETE FROM exercises WHERE name = ?").bind(name).run();
-  return c.json({ say: `Removed ${displayName(name)} from the list.` });
+  return c.json({ message: `Removed ${displayName(name)} from the list` });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -48,13 +48,11 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # Uploaded as Worker secrets on every deploy, so changing them in GitHub and re-running updates the app.
+          # Uploaded as a Worker secret on every deploy, so changing it in GitHub and re-running updates the app.
           secrets: |
-            API_TOKEN
             DASHBOARD_PASSWORD
           command: |
             d1 migrations apply gym-tracker --remote
             deploy
         env:
-          API_TOKEN: ${{ secrets.API_TOKEN }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}

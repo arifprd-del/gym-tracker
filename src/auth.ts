@@ -1,6 +1,4 @@
-// Two kinds of access:
-//  - Siri Shortcuts send `Authorization: Bearer <API_TOKEN>`.
-//  - The dashboard uses a cookie signed with DASHBOARD_PASSWORD, so changing the password signs everyone out.
+// Sign-in: a cookie signed with DASHBOARD_PASSWORD, so changing the password signs everyone out.
 
 const encoder = new TextEncoder();
 export const SESSION_COOKIE = "gym_session";
@@ -15,11 +13,6 @@ export async function safeEqual(a: string, b: string): Promise<boolean> {
   let diff = 0;
   for (let i = 0; i < va.length; i++) diff |= va[i] ^ vb[i];
   return diff === 0;
-}
-
-export async function hasValidBearer(header: string | undefined, token: string | undefined): Promise<boolean> {
-  if (!token || !header?.startsWith("Bearer ")) return false;
-  return safeEqual(header.slice("Bearer ".length).trim(), token);
 }
 
 async function sign(value: string, secret: string): Promise<string> {

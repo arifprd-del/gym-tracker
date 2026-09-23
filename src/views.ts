@@ -4,6 +4,7 @@ import {
   daysAgo,
   displayName,
   formatKg,
+  formatLoad,
   SPLIT_DAYS,
   WORKOUT_DAYS,
   type DayOf,
@@ -234,10 +235,6 @@ function splitTiles(last: DashboardData["lastTrained"], today: string): Html {
   </section>`;
 }
 
-function setLoad(s: Pick<SetRow, "weight_kg" | "reps">): string {
-  return s.weight_kg > 0 ? `${formatKg(s.weight_kg)} kg × ${s.reps}` : `${s.reps} reps`;
-}
-
 export function dashboardPage(data: DashboardData): Html {
   const { todaySummary: t } = data;
   let lastDay = "";
@@ -248,7 +245,7 @@ export function dashboardPage(data: DashboardData): Html {
       <tr>
         <td class="muted">${s.time}</td>
         <td>${dayDot(data.dayOf(s.exercise))}${displayName(s.exercise)}</td>
-        <td class="num">${setLoad(s)}</td>
+        <td class="num">${formatLoad(s)}</td>
         <td class="muted">${s.rpe ? `RPE ${s.rpe}` : ""}${s.note ? ` · ${s.note}` : ""}</td>
         <td class="num">
           <form method="post" action="/sets/${s.id}/delete" onsubmit="return confirm('Delete this set?')">

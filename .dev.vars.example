@@ -1,3 +1,2 @@
-# Copy to .dev.vars for `npm run dev`. Production values are set with `npx wrangler secret put`.
-API_TOKEN=change-me-to-a-long-random-string
+# Copy to .dev.vars for `npm run dev`. The production value is a GitHub secret (see README).
 DASHBOARD_PASSWORD=change-me

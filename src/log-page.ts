@@ -201,7 +201,7 @@ async function api(path, body) {
   }
   if (response.status === 401) { location.href = "/login?next=/log"; throw new Error("Signed out."); }
   const json = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(json.say || "Something went wrong.");
+  if (!response.ok) throw new Error(json.message || "Something went wrong.");
   return json;
 }
 
@@ -227,7 +227,7 @@ els.log.addEventListener("click", async () => {
     const s = result.set;
     data.last[s.exercise] = { weight: s.weight_kg, reps: s.reps };
     data.today.push({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at });
-    toast((result.personalBest ? "🏆 " : "✓ ") + result.say, true);
+    toast((result.personalBest ? "🏆 " : "✓ ") + result.message, true);
     renderToday();
     render();
   } catch (error) {
@@ -244,7 +244,7 @@ els.undo.addEventListener("click", async () => {
     data.today = data.today.filter((s) => s.id !== result.removed.id);
     const previous = [...data.today].reverse().find((s) => s.exercise === result.removed.exercise);
     if (previous) data.last[previous.exercise] = { weight: previous.weight, reps: previous.reps };
-    toast(result.say);
+    toast(result.message);
     renderToday();
     render();
   } catch (error) {
