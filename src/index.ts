@@ -13,17 +13,19 @@ import {
 } from "./auth";
 import {
   addDays,
+  dayLookup,
   describeDay,
   describeLoggedSet,
   displayName,
   localDay,
   normalizeExercise,
-  setsPerDay,
+  lastTrained,
   spokenLoad,
   summarizeSets,
   weekStart,
+  trainingDaysByType,
   weekStreak,
-  weeklyVolume,
+  weeklyVolumeByDay,
   type SetRow,
 } from "./lib";
 import { logPage, type ExerciseButton } from "./log-page";
@@ -290,16 +292,18 @@ app.get("/", async (c) => {
   // One extra day covers time zones ahead of UTC.
   const since = new Date(`${addDays(heatmapStart, -1)}T00:00:00Z`).toISOString();
 
-  const [window, records] = await Promise.all([
+  const [window, records, exercises] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ? ORDER BY performed_at DESC").bind(since).all<SetRow>(),
     c.env.DB.prepare(
       `SELECT exercise, MAX(weight_kg) AS best_kg, ${RECORD_E1RM} AS best_e1rm, COUNT(*) AS sets, MAX(performed_at) AS last
        FROM sets GROUP BY exercise ORDER BY last DESC`,
     ).all<ExerciseRecord>(),
+    c.env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
   ]);
 
   const sets = window.results;
-  const days = setsPerDay(sets, timeZone);
+  const dayOf = dayLookup(exercises.results);
+  const days = trainingDaysByType(sets, dayOf, timeZone);
   const thisWeek = weekStart(today);
 
   return c.html(
@@ -308,8 +312,10 @@ app.get("/", async (c) => {
       todaySummary: summarizeSets(sets.filter((s) => localDay(s.performed_at, timeZone) === today).reverse()),
       weekStreak: weekStreak(days.keys(), today),
       sessionsThisWeek: [...days.keys()].filter((d) => d >= thisWeek).length,
-      weekly: weeklyVolume(sets, timeZone, VOLUME_WEEKS, now),
+      weekly: weeklyVolumeByDay(sets, dayOf, timeZone, VOLUME_WEEKS, now),
       heatmap: { start: heatmapStart, weeks: HEATMAP_WEEKS, days },
+      lastTrained: lastTrained(days),
+      dayOf,
       records: records.results.map((r) => ({ ...r, last: localDay(r.last, timeZone) })),
       recent: sets.slice(0, RECENT_SETS).map((s) => ({
         ...s,

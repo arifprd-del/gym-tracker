@@ -124,3 +124,37 @@ test("session refresh and sign-in redirects", async () => {
   assert.equal(safeNextPath("/\\evil.example"), "/");
   assert.equal(safeNextPath(undefined), "/");
 });
+
+test("push / pull / legs split", async () => {
+  const { dayLookup, weeklyVolumeByDay, trainingDaysByType, lastTrained, daysAgo } = await import("./lib");
+  const dayOf = dayLookup([
+    { name: "bench press", day: "push" },
+    { name: "pull up", day: "pull" },
+    { name: "squat", day: "legs" },
+  ]);
+  assert.equal(dayOf("bench press"), "push");
+  assert.equal(dayOf("farmer carry"), "other");
+
+  const sets = [
+    set("2026-09-21T08:00:00.000Z", "bench press", 80, 5), // Mon: push
+    set("2026-09-21T08:10:00.000Z", "bench press", 80, 5),
+    set("2026-09-21T08:20:00.000Z", "squat", 100, 5), // one leg set on push day
+    set("2026-09-22T08:00:00.000Z", "pull up", 0, 10), // Tue: pull (bodyweight)
+    set("2026-09-23T08:00:00.000Z", "squat", 100, 5), // Wed: legs
+    set("2026-09-23T08:10:00.000Z", "farmer carry", 40, 1),
+  ];
+
+  const [week] = weeklyVolumeByDay(sets, dayOf, "UTC", 1, new Date("2026-09-23T12:00:00.000Z"));
+  assert.deepEqual(week.byDay, { push: 800, pull: 0, legs: 1000, other: 40 });
+  assert.equal(week.volumeKg, 1840);
+
+  const days = trainingDaysByType(sets, dayOf, "UTC");
+  assert.equal(days.get("2026-09-21")?.main, "push");
+  assert.equal(days.get("2026-09-22")?.main, "pull");
+  assert.equal(days.get("2026-09-23")?.main, "legs"); // tie between legs and other goes to legs
+  assert.deepEqual(lastTrained(days), { push: "2026-09-21", pull: "2026-09-22", legs: "2026-09-23" });
+
+  assert.equal(daysAgo("2026-09-23", "2026-09-23"), "Today");
+  assert.equal(daysAgo("2026-09-22", "2026-09-23"), "Yesterday");
+  assert.equal(daysAgo("2026-09-19", "2026-09-23"), "4 days ago");
+});

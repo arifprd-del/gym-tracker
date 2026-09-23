@@ -18,6 +18,8 @@ main.log { padding-bottom: 300px; gap: 14px; }
 .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; background: var(--card);
   border: 1px solid var(--line); border-radius: 14px; position: sticky; top: 8px; z-index: 2; }
 .tabs button { border: 0; border-radius: 10px; padding: 12px 0; font-weight: 600; font-size: 16px; background: none; }
+.tab-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: 1px;
+  box-shadow: 0 0 0 2px var(--card); }
 .tabs button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 @media (min-width: 640px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
@@ -99,7 +101,9 @@ function renderTabs() {
   const tabs = otherExercises().length ? [...DAYS, "other"] : DAYS;
   if (!tabs.includes(state.tab)) state.tab = "push";
   els.tabs.replaceChildren(...tabs.map((tab) => {
-    const b = el("button", { type: "button", textContent: LABELS[tab] });
+    const dot = el("span", { className: "tab-dot" });
+    dot.style.background = "var(--" + tab + ")";
+    const b = el("button", { type: "button" }, [dot, LABELS[tab]]);
     b.setAttribute("aria-pressed", String(tab === state.tab));
     b.onclick = () => { state.tab = tab; state.editing = false; try { localStorage.setItem("gym-tab", tab); } catch {} render(); };
     return b;
