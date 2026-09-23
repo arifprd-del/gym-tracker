@@ -1,0 +1,60 @@
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      # Deploying is skipped, not failed, until the Cloudflare secrets are added to the repository.
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+    steps:
+      - if: env.HAS_CLOUDFLARE != 'true'
+        run: echo "::notice::Deploy skipped. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets (see README)."
+      - if: env.HAS_CLOUDFLARE == 'true'
+        uses: actions/checkout@v7
+      - if: env.HAS_CLOUDFLARE == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - if: env.HAS_CLOUDFLARE == 'true'
+        run: npm ci
+      - if: env.HAS_CLOUDFLARE == 'true'
+        name: Apply database migrations and deploy the Worker
+        uses: cloudflare/wrangler-action@v3.15.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Uploaded as Worker secrets on every deploy, so changing them in GitHub and re-running updates the app.
+          secrets: |
+            API_TOKEN
+            DASHBOARD_PASSWORD
+          command: |
+            d1 migrations apply gym-tracker --remote
+            deploy
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}

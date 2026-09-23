@@ -31,7 +31,22 @@ All endpoints need `Authorization: Bearer <API_TOKEN>` and return JSON with a `s
 
 The API accepts JSON or form bodies. Numbers can arrive as text, and a decimal comma (`82,5`) is understood.
 
-## Setup
+## Deploying with GitHub Actions
+
+Every push to `main` runs the tests, applies any new D1 migrations and deploys the Worker
+(`.github/workflows/deploy.yml`). Add these repository secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | A Cloudflare API token from the **Edit Cloudflare Workers** template, with **Account → D1 → Edit** added |
+| `CLOUDFLARE_ACCOUNT_ID` | Your account ID (shown on the Workers & Pages overview page) |
+| `API_TOKEN` | The token your Siri Shortcuts send, e.g. the output of `openssl rand -hex 32` |
+| `DASHBOARD_PASSWORD` | A long password for the dashboard |
+
+Then run the workflow from the **Actions** tab (**Test and deploy → Run workflow**), or push a commit. The deploy log
+prints your `https://gym-tracker.<subdomain>.workers.dev` URL.
+
+## Manual setup
 
 The D1 database `gym-tracker` already exists (see `wrangler.jsonc`), and the schema in `migrations/` has been applied.
 
