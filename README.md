@@ -1,6 +1,7 @@
 # Gym Tracker
 
-Log workout sets by voice with Siri Shortcuts, then track your progress on a web dashboard.
+Log workout sets with a touch screen built for the gym floor (or by voice with Siri Shortcuts), then track your
+progress on a web dashboard.
 
 ```
 iPhone / Apple Watch            Cloudflare Worker (Hono)              Cloudflare D1
@@ -10,6 +11,11 @@ Siri speaks the reply ◀──JSON─  { "say": "…New personal best!" }
 ```
 
 ## What it does
+
+- **Tap-to-log screen (`/log`):** Push / Pull / Legs tabs with big exercise buttons. Weight and reps are pre-filled from
+  your last set of that exercise, with +/− buttons (2.5 kg / 1 rep). One tap on **Log set** saves it with the current
+  date and time. It also has undo, a rest timer and today's sets, and you can add or remove exercises in each tab.
+  Add it to your Home Screen to open it full screen like an app.
 
 - **Voice logging:** log a set, repeat the last set, undo it, or hear today's summary. Siri reads back every
   answer, including when you set a new personal best.

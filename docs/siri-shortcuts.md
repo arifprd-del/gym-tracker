@@ -1,5 +1,22 @@
 # Siri Shortcuts setup
 
+## Recommended: open the tap-to-log screen
+
+The `/log` page is quicker than dictation at the gym. You get big buttons for your Push / Pull / Legs exercises, with
+weight and reps pre-filled from last time. Every set is saved with the date and time automatically.
+
+**Home Screen app (easiest):** open `https://gym-tracker.<you>.workers.dev/log` in Safari and sign in. Then tap
+**Share → Add to Home Screen**. It opens full screen like an app. Sign in once inside the app too, because iOS keeps
+Home Screen apps separate from Safari. Regular use keeps you signed in.
+
+**Shortcut "Gym":** one action, **Open URLs** with `https://gym-tracker.<you>.workers.dev/log`. Say "Hey Siri, gym", or
+put it on your Home Screen or Lock Screen.
+
+**Open it automatically at the gym:** in Shortcuts, go to **Automation → + → Arrive**, choose your gym's location, pick
+**Run Immediately**, and add the **Open URLs** action with the `/log` address.
+
+The rest of this page covers the voice-only shortcuts, which still work if you prefer them.
+
 Build these in the **Shortcuts** app on your iPhone. The name of each shortcut is the phrase you say to Siri. They also
 run on an Apple Watch paired with the phone.
 

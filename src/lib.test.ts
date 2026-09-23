@@ -111,3 +111,16 @@ test("sessions are signed and expire", async () => {
   const [expires] = cookie.split(".");
   assert.equal(await isValidSession(`${Number(expires) + 1}.${cookie.split(".")[1]}`, "password", now), false);
 });
+
+test("session refresh and sign-in redirects", async () => {
+  const { sessionNeedsRefresh, safeNextPath } = await import("./auth");
+  const now = Date.UTC(2026, 8, 23);
+  const cookie = await createSession("password", now);
+  assert.equal(sessionNeedsRefresh(cookie, now), false);
+  assert.equal(sessionNeedsRefresh(cookie, now + 20 * 24 * 60 * 60 * 1000), true);
+  assert.equal(safeNextPath("/log"), "/log");
+  assert.equal(safeNextPath("//evil.example"), "/");
+  assert.equal(safeNextPath("https://evil.example"), "/");
+  assert.equal(safeNextPath("/\\evil.example"), "/");
+  assert.equal(safeNextPath(undefined), "/");
+});

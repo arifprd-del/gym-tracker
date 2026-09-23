@@ -42,3 +42,14 @@ export async function isValidSession(cookie: string | undefined, secret: string 
   if (!expires || !signature || !(Number(expires) > now)) return false;
   return safeEqual(signature, await sign(expires, secret));
 }
+
+/** True once a valid session is past half its life, so regular use keeps you signed in. */
+export function sessionNeedsRefresh(cookie: string, now = Date.now()): boolean {
+  const expires = Number(cookie.split(".")[0]);
+  return expires - now < (SESSION_DAYS / 2) * 24 * 60 * 60 * 1000;
+}
+
+/** Only same-site paths are allowed after sign-in, so the login form cannot redirect elsewhere. */
+export function safeNextPath(next: unknown): string {
+  return typeof next === "string" && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/";
+}

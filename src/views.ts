@@ -6,14 +6,14 @@ type Html = ReturnType<typeof html>;
 const styles = `
 :root {
   --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #5f6673; --line: #e3e6eb;
-  --accent: #2563eb; --accent-soft: #dbe6fd; --danger: #c52a2a;
+  --accent: #2563eb; --accent-soft: #dbe6fd; --on-accent: #ffffff; --danger: #c52a2a;
   --heat-0: #e8ebf0; --heat-1: #bcd0fa; --heat-2: #7ea4f3; --heat-3: #3f74e6; --heat-4: #1d4ed8;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0f1115; --card: #181b21; --text: #e8eaee; --muted: #9aa1ad; --line: #2a2f38;
-    --accent: #6d9bff; --accent-soft: #1f2b44; --danger: #ff7474;
+    --accent: #6d9bff; --accent-soft: #1f2b44; --on-accent: #0f1115; --danger: #ff7474;
     --heat-0: #232833; --heat-1: #1f3a73; --heat-2: #2c55a8; --heat-3: #4a7ce0; --heat-4: #7ea6ff;
     color-scheme: dark;
   }
@@ -35,7 +35,7 @@ th { color: var(--muted); font-weight: 600; font-size: 13px; }
 td.num, th.num { text-align: right; }
 tr.day td { color: var(--muted); font-size: 13px; font-weight: 600; padding-top: 14px; }
 button, .button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 6px 14px; cursor: pointer; text-decoration: none; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.link { border: 0; background: none; color: var(--danger); padding: 2px 6px; font-size: 13px; }
 .muted { color: var(--muted); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -49,17 +49,22 @@ input { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px soli
 .error { color: var(--danger); margin: 0; }
 `;
 
-export function layout(title: string, body: Html): Html {
+export function layout(title: string, body: Html, head: Html | string = ""): Html {
   return html`<!doctype html>
     <html lang="en">
       <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="robots" content="noindex" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="Gym" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <link rel="manifest" href="/manifest.webmanifest" />
         <title>${title}</title>
         <style>
           ${raw(styles)}
         </style>
+        ${head}
       </head>
       <body>
         ${body}
@@ -67,12 +72,13 @@ export function layout(title: string, body: Html): Html {
     </html>`;
 }
 
-export function loginPage(error?: string): Html {
+export function loginPage(error?: string, next = "/"): Html {
   return layout(
     "Gym Tracker",
     html`<main class="login card">
       <h1>Gym Tracker</h1>
       <form method="post" action="/login">
+        <input type="hidden" name="next" value="${next}" />
         <input type="password" name="password" placeholder="Password" autocomplete="current-password" required autofocus />
         ${error ? html`<p class="error">${error}</p>` : ""}
         <button class="primary" type="submit">Sign in</button>
@@ -195,6 +201,7 @@ export function dashboardPage(data: DashboardData): Html {
       <header>
         <h1>Gym Tracker</h1>
         <div class="row">
+          <a class="button primary" href="/log">Log a set</a>
           <a class="button" href="/export.csv">Export CSV</a>
           <form method="post" action="/logout"><button type="submit">Sign out</button></form>
         </div>

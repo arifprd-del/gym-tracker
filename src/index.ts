@@ -1,7 +1,16 @@
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
-import { SESSION_COOKIE, SESSION_DAYS, createSession, hasValidBearer, isValidSession, safeEqual } from "./auth";
+import {
+  SESSION_COOKIE,
+  SESSION_DAYS,
+  createSession,
+  hasValidBearer,
+  isValidSession,
+  safeEqual,
+  safeNextPath,
+  sessionNeedsRefresh,
+} from "./auth";
 import {
   addDays,
   describeDay,
@@ -17,6 +26,7 @@ import {
   weeklyVolume,
   type SetRow,
 } from "./lib";
+import { logPage, type ExerciseButton } from "./log-page";
 import { dashboardPage, loginPage, type ExerciseRecord } from "./views";
 
 type Env = {
@@ -101,11 +111,23 @@ async function logSet(env: Env, input: { exercise: string; weight: number; reps:
   };
 }
 
+async function setSessionCookie(c: Context<{ Bindings: Env }>) {
+  setCookie(c, SESSION_COOKIE, await createSession(c.env.DASHBOARD_PASSWORD), {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Strict",
+    path: "/",
+    maxAge: SESSION_DAYS * 24 * 60 * 60,
+  });
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
-// API for Siri Shortcuts. Every response has a `say` field the Shortcut can pass straight to "Speak Text".
+// API for Siri Shortcuts and the /log page. Shortcuts send the Bearer token; the page uses the signed-in session.
+// Every response has a `say` field a Shortcut can pass straight to "Speak Text".
 
 app.use("/api/*", async (c, next) => {
-  if (!(await hasValidBearer(c.req.header("authorization"), c.env.API_TOKEN))) {
+  const bearer = await hasValidBearer(c.req.header("authorization"), c.env.API_TOKEN);
+  if (!bearer && !(await isValidSession(getCookie(c, SESSION_COOKIE), c.env.DASHBOARD_PASSWORD))) {
     return c.json({ say: "The gym tracker did not accept the Shortcut's token." }, 401);
   }
   await next();
@@ -157,25 +179,67 @@ app.get("/api/exercises", async (c) => {
   return c.json({ exercises: results.map((r) => displayName(r.exercise)) });
 });
 
-// ---------------------------------------------------------------------------------------------------------------------
-// Dashboard
+const DAYS = ["push", "pull", "legs"] as const;
 
-app.get("/login", (c) => c.html(loginPage()));
+const exerciseSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  day: z.enum(DAYS),
+});
+
+// Adds an exercise button to a day on the /log page (or moves it there if it already exists).
+app.post("/api/exercises", async (c) => {
+  const parsed = exerciseSchema.safeParse(await readBody(c));
+  if (!parsed.success) return c.json({ say: "I need an exercise name and a day." }, 400);
+  const name = normalizeExercise(parsed.data.name);
+  await c.env.DB.prepare(
+    `INSERT INTO exercises (name, day, position)
+     VALUES (?1, ?2, (SELECT COALESCE(MAX(position), 0) + 1 FROM exercises WHERE day = ?2))
+     ON CONFLICT (name) DO UPDATE SET day = excluded.day, position = excluded.position`,
+  )
+    .bind(name, parsed.data.day)
+    .run();
+  return c.json({ say: `Added ${displayName(name)}.`, exercise: { name, day: parsed.data.day } });
+});
+
+// Removes an exercise button. Logged sets for it are kept.
+app.post("/api/exercises/remove", async (c) => {
+  const parsed = exerciseSchema.pick({ name: true }).safeParse(await readBody(c));
+  if (!parsed.success) return c.json({ say: "I need an exercise name." }, 400);
+  const name = normalizeExercise(parsed.data.name);
+  await c.env.DB.prepare("DELETE FROM exercises WHERE name = ?").bind(name).run();
+  return c.json({ say: `Removed ${displayName(name)} from the list.` });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Web pages
+
+// Lets "Add to Home Screen" open the log page full screen, like an app.
+app.get("/manifest.webmanifest", (c) =>
+  c.json(
+    {
+      name: "Gym Tracker",
+      short_name: "Gym",
+      start_url: "/log",
+      display: "standalone",
+      background_color: "#0f1115",
+      theme_color: "#0f1115",
+    },
+    200,
+    { "content-type": "application/manifest+json" },
+  ),
+);
+
+app.get("/login", (c) => c.html(loginPage(undefined, safeNextPath(c.req.query("next")))));
 
 app.post("/login", async (c) => {
   const body = await c.req.parseBody();
   const password = typeof body.password === "string" ? body.password : "";
+  const next = safeNextPath(body.next);
   if (!c.env.DASHBOARD_PASSWORD || !(await safeEqual(password, c.env.DASHBOARD_PASSWORD))) {
-    return c.html(loginPage("That password is not right."), 401);
+    return c.html(loginPage("That password is not right.", next), 401);
   }
-  setCookie(c, SESSION_COOKIE, await createSession(c.env.DASHBOARD_PASSWORD), {
-    httpOnly: true,
-    secure: true,
-    sameSite: "Strict",
-    path: "/",
-    maxAge: SESSION_DAYS * 24 * 60 * 60,
-  });
-  return c.redirect("/");
+  await setSessionCookie(c);
+  return c.redirect(next);
 });
 
 app.post("/logout", (c) => {
@@ -185,8 +249,33 @@ app.post("/logout", (c) => {
 
 // Everything below needs a signed-in session.
 app.use("*", async (c, next) => {
-  if (!(await isValidSession(getCookie(c, SESSION_COOKIE), c.env.DASHBOARD_PASSWORD))) return c.redirect("/login");
+  const cookie = getCookie(c, SESSION_COOKIE);
+  if (!cookie || !(await isValidSession(cookie, c.env.DASHBOARD_PASSWORD))) {
+    const path = new URL(c.req.url).pathname;
+    return c.redirect(path === "/" ? "/login" : `/login?next=${encodeURIComponent(path)}`);
+  }
+  // Keep people who use the app regularly signed in.
+  if (sessionNeedsRefresh(cookie)) await setSessionCookie(c);
   await next();
+});
+
+// Touch-friendly logging screen.
+app.get("/log", async (c) => {
+  const timeZone = c.env.TIMEZONE;
+  const [buttons, lastSets, today] = await Promise.all([
+    c.env.DB.prepare("SELECT name, day FROM exercises ORDER BY day, position, name").all<ExerciseButton>(),
+    c.env.DB.prepare(
+      "SELECT s.* FROM sets s JOIN (SELECT MAX(id) AS id FROM sets GROUP BY exercise) latest ON s.id = latest.id",
+    ).all<SetRow>(),
+    setsToday(c.env.DB, timeZone),
+  ]);
+  return c.html(
+    logPage({
+      exercises: buttons.results,
+      last: Object.fromEntries(lastSets.results.map((s) => [s.exercise, { weight: s.weight_kg, reps: s.reps }])),
+      today: today.map((s) => ({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at })),
+    }),
+  );
 });
 
 const HEATMAP_WEEKS = 16;
