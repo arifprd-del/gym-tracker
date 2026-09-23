@@ -10,15 +10,20 @@ export type LogPageData = {
   exercises: ExerciseButton[];
   last: Record<string, { weight: number; reps: number }>;
   today: { id: number; exercise: string; weight: number; reps: number; at: string }[];
+  cardio: {
+    last: Record<string, { minutes: number; distance: number | null }>;
+    today: { id: number; activity: string; minutes: number; distance: number | null; at: string }[];
+  };
 };
 
 const styles = `
 main.log { padding-bottom: 300px; gap: 14px; }
 .log header a { font-size: 14px; }
+.log header .row { flex-wrap: nowrap; }
 .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; background: var(--card);
   border: 1px solid var(--line); border-radius: 14px; position: sticky; top: 8px; z-index: 2; }
-.tabs button { border: 0; border-radius: 10px; padding: 12px 0; font-weight: 600; font-size: 16px; background: none; }
-.tab-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: 1px;
+.tabs button { border: 0; border-radius: 10px; padding: 12px 2px; font-weight: 600; font-size: 15px; background: none; white-space: nowrap; }
+.tab-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px;
   box-shadow: 0 0 0 2px var(--card); }
 .tabs button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -42,6 +47,7 @@ main.log { padding-bottom: 300px; gap: 14px; }
 .panel-head b { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rest { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .steppers { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.steppers[hidden] { display: none; }
 .stepper { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; background: var(--bg);
   border: 1px solid var(--line); border-radius: 14px; padding: 4px; }
 .stepper button { height: 48px; border-radius: 10px; border: 0; background: var(--card); font-size: 24px; font-weight: 600;
@@ -67,17 +73,21 @@ main.log { padding-bottom: 300px; gap: 14px; }
 const script = `
 const data = JSON.parse(document.getElementById("log-data").textContent);
 const DAYS = ["push", "pull", "legs"];
-const LABELS = { push: "Push", pull: "Pull", legs: "Legs", other: "Other" };
+const LABELS = { push: "Push", pull: "Pull", legs: "Legs", cardio: "Cardio", other: "Other" };
+// Treadmill first: it's the usual one. Activities logged before show up too.
+const DEFAULT_ACTIVITIES = ["treadmill", "exercise bike", "rowing machine", "cross trainer"];
 const $ = (id) => document.getElementById(id);
 const els = { tabs: $("tabs"), grid: $("grid"), today: $("today"), todayCard: $("today-card"), selected: $("selected"),
   rest: $("rest"), weight: $("weight"), reps: $("reps"), log: $("log"), toast: $("toast"), toastText: $("toast-text"),
-  undo: $("undo"), edit: $("edit") };
-const state = { tab: "push", selected: null, editing: false, restFrom: null };
+  undo: $("undo"), edit: $("edit"), liftSteppers: $("lift-steppers"), cardioSteppers: $("cardio-steppers"),
+  minutes: $("minutes"), distance: $("distance") };
+const state = { tab: "push", selected: null, cardioSelected: null, extraActivities: [], editing: false, restFrom: null, lastLogged: null };
 
 const title = (n) => n.replace(/(^|\\s)(\\S)/g, (m, s, c) => s + c.toUpperCase());
 const norm = (n) => n.trim().replace(/\\s+/g, " ").toLowerCase();
 const fmt = (kg) => String(Math.round(kg * 10) / 10);
 const load = (w, r) => (w > 0 ? fmt(w) + " kg × " + r : "BW × " + r);
+const cardioLoad = (m, d) => fmt(m) + " min" + (d ? " · " + fmt(d) + " km" : "");
 const readNumber = (input) => Number(String(input.value).trim().replace(",", "."));
 
 try { const saved = localStorage.getItem("gym-tab"); if (saved) state.tab = saved; } catch {}
@@ -90,6 +100,10 @@ function exercisesFor(tab) {
   return tab === "other" ? otherExercises() : data.exercises.filter((e) => e.day === tab).map((e) => e.name);
 }
 function setsToday(name) { return data.today.filter((s) => s.exercise === name).length; }
+function activities() {
+  return [...new Set([...DEFAULT_ACTIVITIES, ...Object.keys(data.cardio.last), ...state.extraActivities])];
+}
+const isCardio = () => state.tab === "cardio";
 
 function el(tag, props, children) {
   const node = Object.assign(document.createElement(tag), props || {});
@@ -98,21 +112,53 @@ function el(tag, props, children) {
 }
 
 function renderTabs() {
-  const tabs = otherExercises().length ? [...DAYS, "other"] : DAYS;
+  const tabs = otherExercises().length ? [...DAYS, "cardio", "other"] : [...DAYS, "cardio"];
   if (!tabs.includes(state.tab)) state.tab = "push";
   els.tabs.replaceChildren(...tabs.map((tab) => {
     const dot = el("span", { className: "tab-dot" });
     dot.style.background = "var(--" + tab + ")";
     const b = el("button", { type: "button" }, [dot, LABELS[tab]]);
     b.setAttribute("aria-pressed", String(tab === state.tab));
-    b.onclick = () => { state.tab = tab; state.editing = false; try { localStorage.setItem("gym-tab", tab); } catch {} render(); };
+    b.onclick = () => {
+      state.tab = tab;
+      state.editing = false;
+      try { localStorage.setItem("gym-tab", tab); } catch {}
+      if (tab === "cardio" && !state.cardioSelected) return selectCardio(activities()[0]);
+      render();
+    };
     return b;
   }));
 }
 
+function renderCardioGrid() {
+  const tiles = activities().map((name) => {
+    const last = data.cardio.last[name];
+    const count = data.cardio.today.filter((c) => c.activity === name).length;
+    const b = el("button", { type: "button", className: "tile" }, [
+      el("span", { className: "name", textContent: title(name) }),
+      el("span", { className: "meta", textContent: last ? "Last " + cardioLoad(last.minutes, last.distance) : "New" }),
+    ]);
+    if (count) b.append(el("span", { className: "badge", textContent: "×" + count }));
+    b.setAttribute("aria-pressed", String(name === state.cardioSelected));
+    b.onclick = () => selectCardio(name);
+    return b;
+  });
+  const add = el("button", { type: "button", className: "tile add", textContent: "+ Add activity" });
+  add.onclick = () => {
+    const input = prompt("Add a cardio activity");
+    if (!input || !input.trim()) return;
+    const name = norm(input);
+    if (!activities().includes(name)) state.extraActivities.push(name);
+    selectCardio(name);
+  };
+  tiles.push(add);
+  els.grid.replaceChildren(...tiles);
+}
+
 function renderGrid() {
   els.grid.classList.toggle("editing", state.editing);
-  els.edit.hidden = state.tab === "other";
+  els.edit.hidden = state.tab === "other" || isCardio();
+  if (isCardio()) return renderCardioGrid();
   els.edit.textContent = state.editing ? "Done" : "Edit list";
   const tiles = exercisesFor(state.tab).map((name) => {
     const last = data.last[name];
@@ -141,8 +187,25 @@ function renderToday() {
     if (!groups.has(s.exercise)) groups.set(s.exercise, []);
     groups.get(s.exercise).push(s);
   }
-  els.todayCard.hidden = groups.size === 0;
-  els.today.replaceChildren(...[...groups].map(([name, sets]) => {
+  const cardioGroups = new Map();
+  for (const c of data.cardio.today) {
+    if (!cardioGroups.has(c.activity)) cardioGroups.set(c.activity, []);
+    cardioGroups.get(c.activity).push(c);
+  }
+  els.todayCard.hidden = groups.size === 0 && cardioGroups.size === 0;
+  const cardioRows = [...cardioGroups].map(([name, sessions]) => {
+    const row = el("div", { className: "today-row" }, [
+      el("b", { textContent: title(name) }),
+      el("span", { className: "sets", textContent: sessions.map((c) => cardioLoad(c.minutes, c.distance)).join(", ") }),
+    ]);
+    row.onclick = () => {
+      state.tab = "cardio";
+      selectCardio(name);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    return row;
+  });
+  els.today.replaceChildren(...cardioRows, ...[...groups].map(([name, sets]) => {
     const row = el("div", { className: "today-row" }, [
       el("b", { textContent: title(name) }),
       el("span", { className: "sets", textContent: sets.map((s) => (s.weight > 0 ? fmt(s.weight) + "×" + s.reps : "BW×" + s.reps)).join(", ") }),
@@ -155,14 +218,19 @@ function renderToday() {
     };
     return row;
   }));
-  const last = data.today[data.today.length - 1];
-  state.restFrom = last ? new Date(last.at).getTime() : null;
+  const times = [...data.today, ...data.cardio.today].map((e) => new Date(e.at).getTime());
+  state.restFrom = times.length ? Math.max(...times) : null;
   tick();
 }
 
 function renderPanel() {
-  els.selected.textContent = state.selected ? title(state.selected) : "Tap an exercise";
-  els.log.disabled = !state.selected;
+  const cardio = isCardio();
+  const selected = cardio ? state.cardioSelected : state.selected;
+  els.liftSteppers.hidden = cardio;
+  els.cardioSteppers.hidden = !cardio;
+  els.selected.textContent = selected ? title(selected) : cardio ? "Pick an activity" : "Tap an exercise";
+  els.log.textContent = cardio ? "Log cardio" : "Log set";
+  els.log.disabled = !selected;
 }
 
 function render() { renderTabs(); renderGrid(); renderPanel(); }
@@ -172,6 +240,14 @@ function select(name) {
   const last = data.last[name];
   els.weight.value = last ? fmt(last.weight) : "20";
   els.reps.value = last ? String(last.reps) : "10";
+  render();
+}
+
+function selectCardio(name) {
+  state.cardioSelected = name;
+  const last = data.cardio.last[name];
+  els.minutes.value = last ? fmt(last.minutes) : "30";
+  els.distance.value = last && last.distance ? fmt(last.distance) : "0";
   render();
 }
 
@@ -215,7 +291,32 @@ document.querySelectorAll("[data-step]").forEach((button) => {
   });
 });
 
+async function logCardio() {
+  const activity = state.cardioSelected;
+  const minutes = readNumber(els.minutes);
+  const distance = readNumber(els.distance) || 0;
+  if (!activity) return;
+  if (!(minutes > 0)) return toast("Check the minutes.");
+  if (!(distance >= 0)) return toast("Check the distance.");
+  els.log.disabled = true;
+  try {
+    const result = await api("/api/cardio", { activity, minutes, distance });
+    const c = result.cardio;
+    data.cardio.last[c.activity] = { minutes: c.minutes, distance: c.distance_km };
+    data.cardio.today.push({ id: c.id, activity: c.activity, minutes: c.minutes, distance: c.distance_km, at: c.performed_at });
+    state.lastLogged = { kind: "cardio", id: c.id };
+    toast("✓ " + result.message, true);
+    renderToday();
+    render();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    els.log.disabled = !state.cardioSelected;
+  }
+}
+
 els.log.addEventListener("click", async () => {
+  if (isCardio()) return logCardio();
   const exercise = state.selected;
   const weight = readNumber(els.weight);
   const reps = Math.round(readNumber(els.reps));
@@ -227,6 +328,7 @@ els.log.addEventListener("click", async () => {
     const s = result.set;
     data.last[s.exercise] = { weight: s.weight_kg, reps: s.reps };
     data.today.push({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at });
+    state.lastLogged = { kind: "set", id: s.id };
     toast((result.personalBest ? "🏆 " : "✓ ") + result.message, true);
     renderToday();
     render();
@@ -237,14 +339,24 @@ els.log.addEventListener("click", async () => {
   }
 });
 
+// Undo removes exactly the entry this page just logged.
 els.undo.addEventListener("click", async () => {
   els.toast.hidden = true;
+  const target = state.lastLogged;
+  if (!target) return;
+  state.lastLogged = null;
   try {
-    const result = await api("/api/undo");
-    data.today = data.today.filter((s) => s.id !== result.removed.id);
-    const previous = [...data.today].reverse().find((s) => s.exercise === result.removed.exercise);
-    if (previous) data.last[previous.exercise] = { weight: previous.weight, reps: previous.reps };
-    toast(result.message);
+    if (target.kind === "cardio") {
+      const result = await api("/api/cardio/delete", { id: target.id });
+      data.cardio.today = data.cardio.today.filter((c) => c.id !== target.id);
+      toast(result.message);
+    } else {
+      const result = await api("/api/sets/delete", { id: target.id });
+      data.today = data.today.filter((s) => s.id !== target.id);
+      const previous = [...data.today].reverse().find((s) => s.exercise === result.removed.exercise);
+      if (previous) data.last[previous.exercise] = { weight: previous.weight, reps: previous.reps };
+      toast(result.message);
+    }
     renderToday();
     render();
   } catch (error) {
@@ -281,18 +393,22 @@ async function removeExercise(name) {
 }
 
 renderToday();
-render();
+if (isCardio()) selectCardio(activities()[0]);
+else render();
 `;
 
 export function logPage(data: LogPageData) {
   // JSON inside a script tag: escape "<" so a name like "</script>" cannot end the tag early.
   const json = JSON.stringify(data).replace(/</g, "\\u003c");
   return layout(
-    "Log a Set",
+    "Log",
     html`<main class="log">
         <header>
-          <h1>Log a set</h1>
-          <a class="button" href="/">Dashboard</a>
+          <h1>Log</h1>
+          <div class="row">
+            <a class="button" href="/#body-weight">Weigh-in</a>
+            <a class="button" href="/">Dashboard</a>
+          </div>
         </header>
 
         <nav class="tabs" id="tabs" aria-label="Workout day"></nav>
@@ -316,7 +432,7 @@ export function logPage(data: LogPageData) {
       <div class="panel">
         <div class="panel-inner">
           <div class="panel-head"><b id="selected">Tap an exercise</b><span class="rest" id="rest"></span></div>
-          <div class="steppers">
+          <div class="steppers" id="lift-steppers">
             <div class="stepper">
               <button type="button" data-step="-2.5" data-target="weight" aria-label="Less weight">−</button>
               <label><input id="weight" type="text" inputmode="decimal" value="20" data-min="0" autocomplete="off" /><small>kg</small></label>
@@ -326,6 +442,18 @@ export function logPage(data: LogPageData) {
               <button type="button" data-step="-1" data-target="reps" aria-label="Fewer reps">−</button>
               <label><input id="reps" type="text" inputmode="numeric" value="10" data-min="1" autocomplete="off" /><small>reps</small></label>
               <button type="button" data-step="1" data-target="reps" aria-label="More reps">+</button>
+            </div>
+          </div>
+          <div class="steppers" id="cardio-steppers" hidden>
+            <div class="stepper">
+              <button type="button" data-step="-5" data-target="minutes" aria-label="Fewer minutes">−</button>
+              <label><input id="minutes" type="text" inputmode="numeric" value="30" data-min="1" autocomplete="off" /><small>minutes</small></label>
+              <button type="button" data-step="5" data-target="minutes" aria-label="More minutes">+</button>
+            </div>
+            <div class="stepper">
+              <button type="button" data-step="-0.5" data-target="distance" aria-label="Less distance">−</button>
+              <label><input id="distance" type="text" inputmode="decimal" value="0" data-min="0" autocomplete="off" /><small>km</small></label>
+              <button type="button" data-step="0.5" data-target="distance" aria-label="More distance">+</button>
             </div>
           </div>
           <button type="button" class="primary log-button" id="log" disabled>Log set</button>

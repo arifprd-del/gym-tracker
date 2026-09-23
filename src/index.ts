@@ -13,6 +13,10 @@ import {
 import {
   SPLIT_DAYS,
   addDays,
+  bodyWeightTrend,
+  cardioMessage,
+  cardioMinutesPerDay,
+  formatCardio,
   dayLookup,
   displayName,
   formatLoad,
@@ -24,7 +28,11 @@ import {
   trainingDaysByType,
   weekStart,
   weekStreak,
+  weeklyBodyWeight,
+  weeklyCardioMinutes,
   weeklyVolumeByDay,
+  type BodyWeightRow,
+  type CardioRow,
   type SetRow,
 } from "./lib";
 import { logPage, type ExerciseButton } from "./log-page";
@@ -52,6 +60,14 @@ async function setsToday(db: D1Database, timeZone: string, exercise?: string): P
     : db.prepare("SELECT * FROM sets WHERE performed_at >= ? ORDER BY performed_at").bind(since);
   const { results } = await query.all<SetRow>();
   return results.filter((s) => localDay(s.performed_at, timeZone) === today);
+}
+
+/** Cardio from the last 36 hours that falls on today's local date. */
+async function cardioToday(db: D1Database, timeZone: string): Promise<CardioRow[]> {
+  const since = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
+  const today = localDay(new Date(), timeZone);
+  const { results } = await db.prepare("SELECT * FROM cardio WHERE performed_at >= ? ORDER BY performed_at").bind(since).all<CardioRow>();
+  return results.filter((r) => localDay(r.performed_at, timeZone) === today);
 }
 
 async function setSessionCookie(c: Context<{ Bindings: Env }>) {
@@ -105,11 +121,43 @@ app.post("/api/log", async (c) => {
   return c.json({ message: loggedSetMessage(set, setNumber, personalBest), personalBest, set });
 });
 
-// Removes the most recent set, for a mis-tap.
-app.post("/api/undo", async (c) => {
-  const removed = await c.env.DB.prepare("DELETE FROM sets WHERE id = (SELECT MAX(id) FROM sets) RETURNING *").first<SetRow>();
-  if (!removed) return c.json({ message: "There is nothing to undo." }, 404);
+const idSchema = z.object({ id: z.number().int().positive() });
+
+// Undo on the log page: deletes the exact set it just logged.
+app.post("/api/sets/delete", async (c) => {
+  const parsed = idSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ message: "Nothing to undo." }, 400);
+  const removed = await c.env.DB.prepare("DELETE FROM sets WHERE id = ? RETURNING *").bind(parsed.data.id).first<SetRow>();
+  if (!removed) return c.json({ message: "That set was already removed." }, 404);
   return c.json({ message: `Removed ${displayName(removed.exercise)} ${formatLoad(removed)}`, removed });
+});
+
+const cardioSchema = z.object({
+  activity: z.string().trim().min(1).max(60),
+  minutes: z.number().positive().max(600),
+  // 0 or missing means no distance was recorded.
+  distance: z.number().min(0).max(200).optional(),
+});
+
+app.post("/api/cardio", async (c) => {
+  const parsed = cardioSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ message: "Check the activity and minutes." }, 400);
+  const activity = normalizeExercise(parsed.data.activity);
+  const distance = parsed.data.distance ? parsed.data.distance : null;
+  const row = await c.env.DB.prepare("INSERT INTO cardio (activity, minutes, distance_km) VALUES (?, ?, ?) RETURNING *")
+    .bind(activity, parsed.data.minutes, distance)
+    .first<CardioRow>();
+  if (!row) throw new Error("Insert returned no row");
+  const minutesToday = (await cardioToday(c.env.DB, c.env.TIMEZONE)).reduce((sum, r) => sum + r.minutes, 0);
+  return c.json({ message: cardioMessage(row, minutesToday), cardio: row });
+});
+
+app.post("/api/cardio/delete", async (c) => {
+  const parsed = idSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ message: "Nothing to undo." }, 400);
+  const removed = await c.env.DB.prepare("DELETE FROM cardio WHERE id = ? RETURNING *").bind(parsed.data.id).first<CardioRow>();
+  if (!removed) return c.json({ message: "That session was already removed." }, 404);
+  return c.json({ message: `Removed ${displayName(removed.activity)} ${formatCardio(removed)}`, removed });
 });
 
 const exerciseSchema = z.object({
@@ -193,18 +241,26 @@ app.use("*", async (c, next) => {
 // Touch-friendly logging screen.
 app.get("/log", async (c) => {
   const timeZone = c.env.TIMEZONE;
-  const [buttons, lastSets, today] = await Promise.all([
+  const [buttons, lastSets, today, lastCardio, cardio] = await Promise.all([
     c.env.DB.prepare("SELECT name, day FROM exercises ORDER BY day, position, name").all<ExerciseButton>(),
     c.env.DB.prepare(
       "SELECT s.* FROM sets s JOIN (SELECT MAX(id) AS id FROM sets GROUP BY exercise) latest ON s.id = latest.id",
     ).all<SetRow>(),
     setsToday(c.env.DB, timeZone),
+    c.env.DB.prepare(
+      "SELECT c.* FROM cardio c JOIN (SELECT MAX(id) AS id FROM cardio GROUP BY activity) latest ON c.id = latest.id ORDER BY c.id DESC",
+    ).all<CardioRow>(),
+    cardioToday(c.env.DB, timeZone),
   ]);
   return c.html(
     logPage({
       exercises: buttons.results,
       last: Object.fromEntries(lastSets.results.map((s) => [s.exercise, { weight: s.weight_kg, reps: s.reps }])),
       today: today.map((s) => ({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at })),
+      cardio: {
+        last: Object.fromEntries(lastCardio.results.map((r) => [r.activity, { minutes: r.minutes, distance: r.distance_km }])),
+        today: cardio.map((r) => ({ id: r.id, activity: r.activity, minutes: r.minutes, distance: r.distance_km, at: r.performed_at })),
+      },
     }),
   );
 });
@@ -212,6 +268,8 @@ app.get("/log", async (c) => {
 const HEATMAP_WEEKS = 16;
 const VOLUME_WEEKS = 12;
 const RECENT_SETS = 40;
+const RECENT_CARDIO = 10;
+const BODY_WEIGHT_WEEKS = 26;
 
 app.get("/", async (c) => {
   const timeZone = c.env.TIMEZONE;
@@ -221,28 +279,48 @@ app.get("/", async (c) => {
   // One extra day covers time zones ahead of UTC.
   const since = new Date(`${addDays(heatmapStart, -1)}T00:00:00Z`).toISOString();
 
-  const [window, records, exercises] = await Promise.all([
+  const [window, records, exercises, cardioWindow, bodyWeight] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ? ORDER BY performed_at DESC").bind(since).all<SetRow>(),
     c.env.DB.prepare(
       `SELECT exercise, MAX(weight_kg) AS best_kg, ${RECORD_E1RM} AS best_e1rm, COUNT(*) AS sets, MAX(performed_at) AS last
        FROM sets GROUP BY exercise ORDER BY last DESC`,
     ).all<ExerciseRecord>(),
     c.env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
+    c.env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ? ORDER BY performed_at DESC").bind(since).all<CardioRow>(),
+    c.env.DB.prepare("SELECT * FROM body_weight ORDER BY measured_on DESC").all<BodyWeightRow>(),
   ]);
 
   const sets = window.results;
+  const cardio = cardioWindow.results;
   const dayOf = dayLookup(exercises.results);
   const days = trainingDaysByType(sets, dayOf, timeZone);
+  const cardioDays = cardioMinutesPerDay(cardio, timeZone);
+  const activeDays = new Set([...days.keys(), ...cardioDays.keys()]);
   const thisWeek = weekStart(today);
 
   return c.html(
     dashboardPage({
       today,
       todaySummary: summarizeSets(sets.filter((s) => localDay(s.performed_at, timeZone) === today).reverse()),
-      weekStreak: weekStreak(days.keys(), today),
-      sessionsThisWeek: [...days.keys()].filter((d) => d >= thisWeek).length,
+      weekStreak: weekStreak(activeDays, today),
+      sessionsThisWeek: [...activeDays].filter((d) => d >= thisWeek).length,
       weekly: weeklyVolumeByDay(sets, dayOf, timeZone, VOLUME_WEEKS, now),
-      heatmap: { start: heatmapStart, weeks: HEATMAP_WEEKS, days },
+      heatmap: { start: heatmapStart, weeks: HEATMAP_WEEKS, days, cardioDays },
+      cardio: {
+        thisWeekMinutes: [...cardioDays].filter(([d]) => d >= thisWeek).reduce((sum, [, m]) => sum + m, 0),
+        weekly: weeklyCardioMinutes(cardio, timeZone, VOLUME_WEEKS, now),
+        recent: cardio.slice(0, RECENT_CARDIO).map((r) => ({
+          ...r,
+          day: localDay(r.performed_at, timeZone),
+          time: new Date(r.performed_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }),
+        })),
+      },
+      bodyWeight: {
+        weekly: weeklyBodyWeight(bodyWeight.results, BODY_WEIGHT_WEEKS, today),
+        trend: bodyWeightTrend(bodyWeight.results),
+        recent: bodyWeight.results.slice(0, 6),
+        loggedThisWeek: bodyWeight.results.some((r) => r.measured_on >= thisWeek && r.measured_on <= today),
+      },
       lastTrained: lastTrained(days),
       dayOf,
       records: records.results.map((r) => ({ ...r, last: localDay(r.last, timeZone) })),
@@ -259,6 +337,31 @@ app.post("/sets/:id/delete", async (c) => {
   const id = Number(c.req.param("id"));
   if (Number.isInteger(id)) await c.env.DB.prepare("DELETE FROM sets WHERE id = ?").bind(id).run();
   return c.redirect("/");
+});
+
+app.post("/cardio/:id/delete", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (Number.isInteger(id)) await c.env.DB.prepare("DELETE FROM cardio WHERE id = ?").bind(id).run();
+  return c.redirect("/#cardio");
+});
+
+// Saves today's weigh-in from the dashboard form. Saving again on the same day replaces it.
+app.post("/body-weight", async (c) => {
+  const body = await c.req.parseBody();
+  const weight = Number(String(body.weight ?? "").trim().replace(",", "."));
+  if (Number.isFinite(weight) && weight >= 20 && weight <= 400) {
+    await c.env.DB.prepare(
+      "INSERT INTO body_weight (measured_on, weight_kg) VALUES (?, ?) ON CONFLICT (measured_on) DO UPDATE SET weight_kg = excluded.weight_kg",
+    )
+      .bind(localDay(new Date(), c.env.TIMEZONE), Math.round(weight * 10) / 10)
+      .run();
+  }
+  return c.redirect("/#body-weight");
+});
+
+app.post("/body-weight/:date/delete", async (c) => {
+  await c.env.DB.prepare("DELETE FROM body_weight WHERE measured_on = ?").bind(c.req.param("date")).run();
+  return c.redirect("/#body-weight");
 });
 
 app.get("/export.csv", async (c) => {

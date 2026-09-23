@@ -175,3 +175,82 @@ export function daysAgo(date: string, today: string): string {
   if (diff === 1) return "Yesterday";
   return `${diff} days ago`;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Cardio and body weight
+
+export type CardioRow = {
+  id: number;
+  performed_at: string; // UTC ISO-8601
+  activity: string; // normalised like exercise names
+  minutes: number;
+  distance_km: number | null;
+};
+
+export type BodyWeightRow = { measured_on: string; weight_kg: number }; // measured_on is a local YYYY-MM-DD
+
+/** 25 -> "25 min", 90 -> "1 h 30 min". */
+export function formatMinutes(minutes: number): string {
+  const total = Math.round(minutes);
+  if (total < 60) return `${total} min`;
+  const rest = total % 60;
+  return rest ? `${Math.floor(total / 60)} h ${rest} min` : `${total / 60} h`;
+}
+
+/** "30 min · 4.5 km", or "30 min" without a distance. */
+export function formatCardio(c: Pick<CardioRow, "minutes" | "distance_km">): string {
+  return c.distance_km ? `${formatMinutes(c.minutes)} · ${formatKg(c.distance_km)} km` : formatMinutes(c.minutes);
+}
+
+/** Confirmation shown after logging cardio. */
+export function cardioMessage(c: Pick<CardioRow, "activity" | "minutes" | "distance_km">, minutesToday: number): string {
+  const message = `${displayName(c.activity)} ${formatCardio(c)}`;
+  return minutesToday > c.minutes ? `${message} · ${formatMinutes(minutesToday)} cardio today` : message;
+}
+
+/** Cardio minutes per local date. */
+export function cardioMinutesPerDay(rows: CardioRow[], timeZone: string): Map<string, number> {
+  const days = new Map<string, number>();
+  for (const c of rows) {
+    const day = localDay(c.performed_at, timeZone);
+    days.set(day, (days.get(day) ?? 0) + c.minutes);
+  }
+  return days;
+}
+
+/** Cardio minutes per week (Monday start) for the last `weeks` weeks, oldest first, including empty weeks. */
+export function weeklyCardioMinutes(rows: CardioRow[], timeZone: string, weeks: number, now = new Date()): { week: string; minutes: number }[] {
+  const thisWeek = weekStart(localDay(now, timeZone));
+  const totals = new Map<string, number>();
+  for (let i = weeks - 1; i >= 0; i--) totals.set(addDays(thisWeek, -7 * i), 0);
+  for (const c of rows) {
+    const week = weekStart(localDay(c.performed_at, timeZone));
+    if (totals.has(week)) totals.set(week, totals.get(week)! + c.minutes);
+  }
+  return [...totals].map(([week, minutes]) => ({ week, minutes }));
+}
+
+/** The last weigh-in of each week for the last `weeks` weeks, oldest first; null for weeks with no weigh-in. */
+export function weeklyBodyWeight(rows: BodyWeightRow[], weeks: number, today: string): { week: string; kg: number | null }[] {
+  const thisWeek = weekStart(today);
+  const latest = new Map<string, BodyWeightRow | null>();
+  for (let i = weeks - 1; i >= 0; i--) latest.set(addDays(thisWeek, -7 * i), null);
+  for (const r of rows) {
+    const week = weekStart(r.measured_on);
+    if (!latest.has(week)) continue;
+    const current = latest.get(week);
+    if (!current || r.measured_on > current.measured_on) latest.set(week, r);
+  }
+  return [...latest].map(([week, r]) => ({ week, kg: r ? r.weight_kg : null }));
+}
+
+/** Latest weigh-in and the change since the weigh-in closest to `days` days before it (null if there is none). */
+export function bodyWeightTrend(rows: BodyWeightRow[], days = 28): { latest: BodyWeightRow | null; changeKg: number | null; since: string | null } {
+  if (rows.length === 0) return { latest: null, changeKg: null, since: null };
+  const sorted = [...rows].sort((a, b) => a.measured_on.localeCompare(b.measured_on));
+  const latest = sorted[sorted.length - 1];
+  const target = addDays(latest.measured_on, -days);
+  const earlier = sorted.filter((r) => r.measured_on <= target).pop() ?? (sorted.length > 1 ? sorted[0] : null);
+  if (!earlier || earlier === latest) return { latest, changeKg: null, since: null };
+  return { latest, changeKg: Math.round((latest.weight_kg - earlier.weight_kg) * 10) / 10, since: earlier.measured_on };
+}

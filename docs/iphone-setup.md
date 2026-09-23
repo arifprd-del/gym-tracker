@@ -15,6 +15,17 @@
 Mis-tapped? Tap **Undo** in the message that appears. The **Today** list at the bottom shows what you've done; tap a row
 to do another set of that exercise.
 
+## Cardio
+
+Tap the **Cardio** tab. Treadmill is picked for you with last time's minutes and distance. Adjust the **minutes**
+(5 per tap) and, if you like, the **km** (0.5 per tap; leave it at 0 to skip distance), then tap **Log cardio**. Use
+**+ Add activity** for anything not listed.
+
+## Weekly weigh-in
+
+Tap **Weigh-in** at the top of the log screen (or scroll to **Body weight** on the dashboard), type your weight and tap
+**Save today**. Once a week is enough; the dashboard reminds you until you've done it that week.
+
 ## Changing your exercises
 
 Use **+ Add exercise** at the end of a tab to add one, or **Edit list** to remove one (your logged sets are kept). An

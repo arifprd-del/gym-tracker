@@ -151,3 +151,44 @@ test("push / pull / legs split", async () => {
   assert.equal(daysAgo("2026-09-22", "2026-09-23"), "Yesterday");
   assert.equal(daysAgo("2026-09-19", "2026-09-23"), "4 days ago");
 });
+
+test("cardio formatting and weekly minutes", async () => {
+  const { formatMinutes, formatCardio, cardioMessage, weeklyCardioMinutes, cardioMinutesPerDay } = await import("./lib");
+  assert.equal(formatMinutes(25), "25 min");
+  assert.equal(formatMinutes(60), "1 h");
+  assert.equal(formatMinutes(95), "1 h 35 min");
+  assert.equal(formatCardio({ minutes: 30, distance_km: 4.5 }), "30 min · 4.5 km");
+  assert.equal(formatCardio({ minutes: 30, distance_km: null }), "30 min");
+  assert.equal(cardioMessage({ activity: "treadmill", minutes: 20, distance_km: null }, 20), "Treadmill 20 min");
+  assert.equal(cardioMessage({ activity: "treadmill", minutes: 20, distance_km: 3 }, 45), "Treadmill 20 min · 3 km · 45 min cardio today");
+
+  const rows = [
+    { id: 1, performed_at: "2026-09-22T07:00:00.000Z", activity: "treadmill", minutes: 30, distance_km: null },
+    { id: 2, performed_at: "2026-09-22T18:00:00.000Z", activity: "treadmill", minutes: 15, distance_km: null },
+    { id: 3, performed_at: "2026-09-10T07:00:00.000Z", activity: "rowing machine", minutes: 20, distance_km: 4 },
+  ];
+  assert.deepEqual(weeklyCardioMinutes(rows, "UTC", 3, new Date("2026-09-23T12:00:00.000Z")), [
+    { week: "2026-09-07", minutes: 20 },
+    { week: "2026-09-14", minutes: 0 },
+    { week: "2026-09-21", minutes: 45 },
+  ]);
+  assert.equal(cardioMinutesPerDay(rows, "UTC").get("2026-09-22"), 45);
+});
+
+test("weekly body weight and trend", async () => {
+  const { weeklyBodyWeight, bodyWeightTrend } = await import("./lib");
+  const rows = [
+    { measured_on: "2026-08-24", weight_kg: 82 },
+    { measured_on: "2026-09-07", weight_kg: 81.4 },
+    { measured_on: "2026-09-09", weight_kg: 81 }, // later in the same week wins
+    { measured_on: "2026-09-21", weight_kg: 80.6 },
+  ];
+  assert.deepEqual(weeklyBodyWeight(rows, 3, "2026-09-23"), [
+    { week: "2026-09-07", kg: 81 },
+    { week: "2026-09-14", kg: null },
+    { week: "2026-09-21", kg: 80.6 },
+  ]);
+  assert.deepEqual(bodyWeightTrend(rows), { latest: rows[3], changeKg: -1.4, since: "2026-08-24" });
+  assert.deepEqual(bodyWeightTrend([rows[0]]), { latest: rows[0], changeKg: null, since: null });
+  assert.deepEqual(bodyWeightTrend([]), { latest: null, changeKg: null, since: null });
+});

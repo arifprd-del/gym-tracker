@@ -14,9 +14,14 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   your last set of that exercise, with +/− buttons (2.5 kg / 1 rep). One tap on **Log set** saves it with the current
   date and time. It also has undo, a rest timer and today's sets, and you can add or remove exercises in each tab.
   Add it to your Home Screen to open it full screen like an app. See [docs/iphone-setup.md](docs/iphone-setup.md).
+- **Cardio tab:** Treadmill (plus bike, rower, cross trainer, or your own), logged by minutes (±5) with an optional
+  distance in km.
+- **Weekly body weight:** a weigh-in box on the dashboard (one entry per day, saving again replaces it), with the
+  change over about four weeks and a weekly chart. A reminder shows until you've weighed in that week.
 - **Dashboard (`/`):** today's sets, when you last trained Push / Pull / Legs, weekly volume stacked by workout type, a
   training-days calendar coloured by workout type, a week streak, personal records with an estimated one-rep max, and
-  recent sets with delete buttons. It supports light and dark mode and works on a phone.
+  recent sets with delete buttons. Cardio has its own minutes-per-week chart, and cardio days are marked with a dot on
+  the calendar. It supports light and dark mode and works on a phone.
 - **CSV export** of every set.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and
