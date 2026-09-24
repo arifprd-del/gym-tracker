@@ -492,3 +492,76 @@ export function progressChange(sessions: ExerciseSession[], days = 56): { change
   const value = (s: ExerciseSession) => (bodyweight ? s.bestReps : s.bestE1rm);
   return { change: Math.round((value(latest) - value(earlier)) * 10) / 10, since: earlier.day };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Stall alert: the last few sessions haven't beaten the earlier best.
+
+export type Stall = {
+  sessions: number; // how many recent sessions in a row haven't beaten the best
+  bodyweight: boolean;
+  best: number; // best est. 1RM (kg), or best reps for bodyweight moves
+  bestDay: string;
+  deload: { weight: number; reps: number } | null;
+  switchReps: { weight: number; reps: number } | null;
+};
+
+const STALL_SESSIONS = 3;
+const STALL_ACTIVE_DAYS = 42;
+
+/** Round to a loadable weight (2.5 kg steps from 20 kg, 1 kg steps below), down by default or to the nearest step. */
+function roundLoad(kg: number, mode: "down" | "nearest" = "down"): number {
+  const step = kg >= 20 ? 2.5 : 1;
+  const steps = mode === "down" ? Math.floor(kg / step) : Math.round(kg / step);
+  return Math.max(step, steps * step);
+}
+
+/**
+ * A stall when the last 3+ sessions in a row didn't beat the best before them. Needs 4+ sessions, and the exercise
+ * must have been done within the last 6 weeks, since old exercises aren't worth nagging about.
+ */
+export function detectStall(sessions: ExerciseSession[], today: string): Stall | null {
+  if (sessions.length < STALL_SESSIONS + 1) return null;
+  const last = sessions[sessions.length - 1];
+  if (last.day < addDays(today, -STALL_ACTIVE_DAYS)) return null;
+  const bodyweight = sessions.every((s) => s.topWeight === 0);
+  const measure = (s: ExerciseSession) => (bodyweight ? s.bestReps : s.bestE1rm);
+
+  // Count sessions from the end that didn't beat the best of everything before them.
+  let trailing = 0;
+  for (let i = sessions.length - 1; i > 0; i--) {
+    const bestBefore = Math.max(...sessions.slice(0, i).map(measure));
+    if (measure(sessions[i]) > bestBefore + 0.01) break;
+    trailing++;
+  }
+  if (trailing < STALL_SESSIONS) return null;
+
+  const bestSession = sessions.reduce((b, s) => (measure(s) > measure(b) ? s : b));
+  if (bodyweight) {
+    return { sessions: trailing, bodyweight, best: bestSession.bestReps, bestDay: bestSession.day, deload: null, switchReps: null };
+  }
+  // Deload: about 10% under the last top weight, same reps. Switch: move to the other rep range at a matching weight.
+  const reps = last.bestReps;
+  const targetReps = reps <= 7 ? 10 : 5;
+  const e1rm = Math.round(bestSession.bestE1rm * 10) / 10;
+  return {
+    sessions: trailing,
+    bodyweight,
+    best: e1rm,
+    bestDay: bestSession.day,
+    // At least one step lighter, even when 10% rounds back up to the same weight.
+    deload: { weight: Math.min(roundLoad(last.topWeight * 0.9, "nearest"), roundLoad(last.topWeight) - (last.topWeight >= 20 ? 2.5 : 1)), reps },
+    switchReps: { weight: roundLoad(e1rm / (1 + targetReps / 30) * 0.95), reps: targetReps },
+  };
+}
+
+/** Stalls for every exercise in a batch of sets. */
+export function stallsByExercise(sets: SetRow[], timeZone: string, today: string): Map<string, Stall> {
+  const byExercise = new Map<string, SetRow[]>();
+  for (const s of sets) byExercise.set(s.exercise, [...(byExercise.get(s.exercise) ?? []), s]);
+  const stalls = new Map<string, Stall>();
+  for (const [exercise, rows] of byExercise) {
+    const stall = detectStall(exerciseSessions(rows, timeZone), today);
+    if (stall) stalls.set(exercise, stall);
+  }
+  return stalls;
+}

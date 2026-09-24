@@ -38,6 +38,9 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
 - **Exercise progress (`/exercise/<name>`):** tap an exercise name on the dashboard, or **📈 Progress** on the log
   screen, to see the best set, best estimated 1RM, the change over about 8 weeks, a strength-over-time chart (best reps
   for bodyweight moves) and every session's sets, with 🏆 on record days.
+- **Stall alert:** when an exercise's last 3 sessions (within the last 6 weeks) haven't beaten its best estimated 1RM
+  (best reps for bodyweight moves), the log screen offers one-tap **Deload** (about 10% lighter) and **Switch** (other
+  rep range at a matching weight) targets, the progress page explains both, and Personal records tags it "Stalled".
 - **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and

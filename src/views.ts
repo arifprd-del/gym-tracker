@@ -14,6 +14,7 @@ import {
   type CardioRow,
   type DayOf,
   type ExerciseSession,
+  type Stall,
   type DaySummary,
   type SetRow,
   type SplitDay,
@@ -107,6 +108,8 @@ svg text { fill: var(--muted); font-size: 11px; }
 a.plain { color: inherit; text-decoration: none; }
 a.plain:hover, a.plain:focus-visible { text-decoration: underline; }
 .stats.compact .stat b { font-size: clamp(18px, 5.2vw, 26px); white-space: nowrap; }
+.tag { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--nudge-bg); color: var(--text); text-decoration: none; vertical-align: 1px; }
 .history td.sets { white-space: normal; color: var(--muted); }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .login { max-width: 360px; margin: 12vh auto 0; }
@@ -185,6 +188,8 @@ export type DashboardData = {
   };
   lastTrained: Record<SplitDay, string | null>;
   dayOf: DayOf;
+  /** Exercises whose last 3+ sessions haven't beaten their best. */
+  stalled: Set<string>;
   records: ExerciseRecord[];
   recent: (SetRow & { day: string; time: string })[];
 };
@@ -610,7 +615,7 @@ export function dashboardPage(data: DashboardData): Html {
               <tr><th>Exercise</th><th class="num">Best</th><th class="num">Est. 1RM</th><th class="num">Sets</th><th class="num">Last done</th></tr>
               ${data.records.map(
                 (r) => html`<tr>
-                  <td>${dayDot(data.dayOf(r.exercise))}<a class="plain" href="${exerciseHref(r.exercise)}">${displayName(r.exercise)}</a></td>
+                  <td>${dayDot(data.dayOf(r.exercise))}<a class="plain" href="${exerciseHref(r.exercise)}">${displayName(r.exercise)}</a>${data.stalled.has(r.exercise) ? html` <a class="tag" href="${exerciseHref(r.exercise)}" title="No progress in the last 3 sessions">Stalled</a>` : ""}</td>
                   <td class="num">${r.best_kg > 0 ? `${formatKg(r.best_kg)} kg` : "Bodyweight"}</td>
                   <td class="num">${r.best_kg > 0 ? `${formatKg(r.best_e1rm)} kg` : "–"}</td>
                   <td class="num">${r.sets}</td>
@@ -679,8 +684,22 @@ export type ExercisePageData = {
   day: WorkoutDay;
   sessions: ExerciseSession[];
   change: { change: number; since: string } | null;
+  stall: Stall | null;
   today: string;
 };
+
+function stallBanner(stall: Stall): Html {
+  const bestText = stall.bodyweight ? `${stall.best} reps` : `est. 1RM ${formatKg(stall.best)} kg`;
+  const tips = stall.bodyweight
+    ? html`<li>Add one extra set, or rest a minute longer between sets.</li><li>Or slow the lowering phase to 3 seconds per rep for a couple of sessions.</li>`
+    : html`<li><b>Deload:</b> one session at <b>${formatLoad({ weight_kg: stall.deload!.weight, reps: stall.deload!.reps })}</b>, then build back up by 2.5 kg a session.</li>
+        <li><b>Or change the rep range:</b> try <b>${formatLoad({ weight_kg: stall.switchReps!.weight, reps: stall.switchReps!.reps })}</b> for a few weeks.</li>`;
+  return html`<section class="nudge" role="status">
+    <b>Stalled for ${stall.sessions} sessions.</b> Your best (${bestText}) was on ${shortDate(stall.bestDay)}. Plateaus are normal; a small change usually breaks them:
+    <ul style="margin: 8px 0 0; padding-left: 20px; display: grid; gap: 4px">${tips}</ul>
+    <span class="muted" style="font-size: 13px">Both targets are one tap on the Log screen.</span>
+  </section>`;
+}
 
 /** Line chart of one value per session, placed by date so gaps between sessions show as gaps in time. */
 function progressChart(sessions: ExerciseSession[], bodyweight: boolean, colour: string): Html {
@@ -749,7 +768,8 @@ export function exercisePage(d: ExercisePageData): Html {
 
       ${sessions.length === 0
         ? html`<section class="card"><p class="muted" style="margin: 0">No sets logged for ${title} yet.</p></section>`
-        : html`<section class="stats compact" aria-label="Summary">
+        : html`${d.stall ? stallBanner(d.stall) : ""}
+            <section class="stats compact" aria-label="Summary">
               ${bodyweight
                 ? stat(`${best!.bestReps} reps`, `best set · ${shortDate(best!.day)}`)
                 : stat(`${formatKg(best!.topWeight)} kg × ${best!.bestReps}`, `best set · ${shortDate(best!.day)}`)}

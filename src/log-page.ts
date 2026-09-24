@@ -1,5 +1,5 @@
 import { html, raw } from "hono/html";
-import type { SplitDay } from "./lib";
+import type { SplitDay, Stall } from "./lib";
 import { layout } from "./views";
 
 // Touch-first logging screen: pick a day, tap an exercise, adjust weight and reps, tap "Log set".
@@ -14,6 +14,8 @@ export type LogPageData = {
   /** Next day in the push / pull / legs rotation, and the split day already done today, if any. */
   plan: SplitDay;
   doneToday: SplitDay | null;
+  /** Exercises whose last 3+ sessions haven't beaten their best, with suggested changes. */
+  stalls: Record<string, Stall>;
   /** Best set of the previous session per exercise, with one-tap targets to beat it. */
   previous: Record<string, { day: string; weight: number; reps: number; targets: { weight: number; reps: number }[] }>;
   cardio: {
@@ -23,7 +25,7 @@ export type LogPageData = {
 };
 
 const styles = `
-main.log { padding-bottom: 345px; gap: 14px; }
+main.log { padding-bottom: 385px; gap: 14px; }
 .log header a { font-size: 14px; }
 .log header .row { flex-wrap: nowrap; }
 .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; background: var(--card);
@@ -54,12 +56,20 @@ main.log { padding-bottom: 345px; gap: 14px; }
 .panel-head b { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress-link { font-size: 14px; color: var(--accent); text-decoration: none; white-space: nowrap; margin-right: auto; }
 .rest { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.hint { display: flex; align-items: center; gap: 8px; min-height: 34px; font-size: 14px; color: var(--muted); overflow-x: auto; white-space: nowrap; }
+.hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-height: 34px; font-size: 14px; color: var(--muted); }
+.hint .chip { white-space: nowrap; }
 .chip { border-radius: 999px; padding: 6px 12px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); font-weight: 650; font-size: 14px; touch-action: manipulation; }
 .plan-hint { color: var(--muted); font-size: 14px; }
 .plan-hint b { color: var(--text); }
 .steppers { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .steppers[hidden] { display: none; }
+/* Smallest iPhones (320px): shrink the tabs and header buttons so nothing runs off the right edge. */
+@media (max-width: 360px) {
+  .tabs button { font-size: 13px; padding: 10px 0; }
+  .tab-dot { width: 6px; height: 6px; margin-right: 3px; }
+  .log header .button { padding: 6px 10px; font-size: 13px; }
+  .log h1 { font-size: 20px; }
+}
 .stepper { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; background: var(--bg);
   border: 1px solid var(--line); border-radius: 14px; padding: 4px; }
 .stepper button { height: 48px; border-radius: 10px; border: 0; background: var(--card); font-size: 24px; font-weight: 600;
@@ -265,6 +275,19 @@ function renderHint() {
   }
   const previous = state.selected && data.previous[state.selected];
   if (!previous) return els.hint.replaceChildren(state.selected ? "First time? Pick a weight you can do with good form." : "");
+  // A stall replaces "beat last time" with a deload or a rep-range change, until a session beats the old best.
+  const stall = data.stalls[state.selected];
+  if (stall && !beatenToday(state.selected)) {
+    if (stall.bodyweight) return els.hint.replaceChildren("⚠️ Stalled " + stall.sessions + " sessions · try an extra set or slower reps");
+    const fill = (t) => () => { els.weight.value = fmt(t.weight); els.reps.value = String(t.reps); };
+    // Short labels so both targets fit across a phone.
+    const short = (t) => fmt(t.weight) + "×" + t.reps;
+    return els.hint.replaceChildren(
+      "⚠️ Stalled:",
+      chip("Deload " + short(stall.deload), fill(stall.deload)),
+      chip("Switch " + short(stall.switchReps), fill(stall.switchReps)),
+    );
+  }
   if (beatenToday(state.selected)) return els.hint.replaceChildren("💪 Beat last time (" + load(previous.weight, previous.reps) + ") today");
   els.hint.replaceChildren(
     "Beat " + load(previous.weight, previous.reps) + ":",

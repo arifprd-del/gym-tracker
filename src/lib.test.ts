@@ -376,3 +376,51 @@ test("per-exercise sessions and progress", async () => {
   assert.equal(pullUps[1].record, false); // bodyweight: no weight records
   assert.deepEqual(progressChange(pullUps), { change: 3, since: "2026-09-01" }); // reps
 });
+
+test("stall alert", async () => {
+  const { exerciseSessions, detectStall } = await import("./lib");
+  const bench = (day: string, weight: number, reps: number) => set(`${day}T17:00:00.000Z`, "bench press", weight, reps);
+
+  // Progressing: no stall.
+  const rising = exerciseSessions([bench("2026-09-01", 70, 5), bench("2026-09-05", 72.5, 5), bench("2026-09-09", 75, 5), bench("2026-09-13", 77.5, 5)], "UTC");
+  assert.equal(detectStall(rising, "2026-09-14"), null);
+
+  // Best on 1 Sept, then three sessions that don't beat it.
+  const flat = exerciseSessions(
+    [bench("2026-09-01", 80, 5), bench("2026-09-05", 80, 5), bench("2026-09-09", 80, 4), bench("2026-09-13", 77.5, 5)],
+    "UTC",
+  );
+  assert.deepEqual(detectStall(flat, "2026-09-14"), {
+    sessions: 3,
+    bodyweight: false,
+    best: 93.3, // 80 × (1 + 5/30)
+    bestDay: "2026-09-01",
+    deload: { weight: 70, reps: 5 }, // 90% of 77.5 = 69.75 -> nearest 70
+    switchReps: { weight: 65, reps: 10 }, // 93.3 / (1 + 10/30) × 0.95 = 66.5 -> 65
+  });
+  // Only two flat sessions: not yet.
+  assert.equal(detectStall(flat.slice(0, 3), "2026-09-14"), null);
+  // Not done for over 6 weeks: not worth nagging about.
+  assert.equal(detectStall(flat, "2026-11-30"), null);
+
+  // High-rep stall switches to 5s; light dumbbells step by 1 kg.
+  const raises = exerciseSessions(
+    ["2026-09-01", "2026-09-05", "2026-09-09", "2026-09-13"].map((d) => set(`${d}T17:00:00.000Z`, "lateral raise", 10, 12)),
+    "UTC",
+  );
+  const r = detectStall(raises, "2026-09-14");
+  assert.deepEqual([r?.deload, r?.switchReps], [{ weight: 9, reps: 12 }, { weight: 11, reps: 5 }]);
+  // 90% of 30 kg is 27 kg -> nearest loadable 27.5 kg, not 25 kg.
+  const fly = exerciseSessions(
+    ["2026-09-01", "2026-09-05", "2026-09-09", "2026-09-13"].map((d) => set(`${d}T17:00:00.000Z`, "chest fly", 30, 10)),
+    "UTC",
+  );
+  assert.deepEqual(detectStall(fly, "2026-09-14")?.deload, { weight: 27.5, reps: 10 });
+
+  // Bodyweight: reps only, no weight suggestions.
+  const pullUps = exerciseSessions(
+    ["2026-09-01", "2026-09-05", "2026-09-09", "2026-09-13"].map((d) => set(`${d}T17:00:00.000Z`, "pull up", 0, 8)),
+    "UTC",
+  );
+  assert.deepEqual(detectStall(pullUps, "2026-09-14"), { sessions: 3, bodyweight: true, best: 8, bestDay: "2026-09-01", deload: null, switchReps: null });
+});

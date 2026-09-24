@@ -28,6 +28,8 @@ import {
   exportCsv,
   exerciseSessions,
   progressChange,
+  detectStall,
+  stallsByExercise,
   stepsSummary,
   lastSessionBest,
   todaysPlan,
@@ -335,6 +337,7 @@ app.get("/log", async (c) => {
       today: today.map((s) => ({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at })),
       plan: plan.next,
       doneToday: plan.doneToday,
+      stalls: Object.fromEntries(stallsByExercise(history.results, timeZone, todayDate)),
       previous: Object.fromEntries(
         [...lastSessionBest(history.results, timeZone, todayDate)].map(([name, best]) => [name, { ...best, targets: beatTargets(best) }]),
       ),
@@ -431,6 +434,7 @@ app.get("/", async (c) => {
       },
       lastTrained: lastTrained(days),
       dayOf,
+      stalled: new Set(stallsByExercise(sets, timeZone, today).keys()),
       records: records.results.map((r) => ({ ...r, last: localDay(r.last, timeZone) })),
       recent: sets.slice(0, RECENT_SETS).map((s) => ({
         ...s,
@@ -455,6 +459,7 @@ app.get("/exercise/:name", async (c) => {
       day: button?.day ?? "other",
       sessions,
       change: progressChange(sessions),
+      stall: detectStall(sessions, localDay(new Date(), c.env.TIMEZONE)),
       today: localDay(new Date(), c.env.TIMEZONE),
     }),
     sets.results.length || button ? 200 : 404,
