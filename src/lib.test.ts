@@ -100,7 +100,8 @@ test("sessions are signed and expire", async () => {
   const cookie = await createSession("password", now);
   assert.equal(await isValidSession(cookie, "password", now), true);
   assert.equal(await isValidSession(cookie, "changed-password", now), false);
-  assert.equal(await isValidSession(cookie, "password", now + 31 * 24 * 60 * 60 * 1000), false);
+  assert.equal(await isValidSession(cookie, "password", now + 300 * 24 * 60 * 60 * 1000), true); // lasts a year
+  assert.equal(await isValidSession(cookie, "password", now + 366 * 24 * 60 * 60 * 1000), false);
   const [expires] = cookie.split(".");
   assert.equal(await isValidSession(`${Number(expires) + 1}.${cookie.split(".")[1]}`, "password", now), false);
 });
@@ -110,7 +111,8 @@ test("session refresh and sign-in redirects", async () => {
   const now = Date.UTC(2026, 8, 23);
   const cookie = await createSession("password", now);
   assert.equal(sessionNeedsRefresh(cookie, now), false);
-  assert.equal(sessionNeedsRefresh(cookie, now + 20 * 24 * 60 * 60 * 1000), true);
+  assert.equal(sessionNeedsRefresh(cookie, now + 6 * 24 * 60 * 60 * 1000), false);
+  assert.equal(sessionNeedsRefresh(cookie, now + 8 * 24 * 60 * 60 * 1000), true); // renewed after a week
   assert.equal(safeNextPath("/log"), "/log");
   assert.equal(safeNextPath("//evil.example"), "/");
   assert.equal(safeNextPath("https://evil.example"), "/");

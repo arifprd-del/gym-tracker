@@ -79,7 +79,7 @@ npm run typecheck
 
 ## Security notes
 
-- Sessions are HMAC-signed cookies (`HttpOnly`, `Secure`, `SameSite=Strict`) that last 30 days and renew as you use
-  the app. Changing `DASHBOARD_PASSWORD` signs out every session.
+- Sessions are HMAC-signed cookies (`HttpOnly`, `Secure`, `SameSite=Strict`) that last a year and renew as you use
+  the app, so each device signs in once. Changing `DASHBOARD_PASSWORD` signs out every session.
 - The sign-in form doesn't limit repeated attempts, so use a long password.
 - Only this Worker can reach D1; there's no public database endpoint.

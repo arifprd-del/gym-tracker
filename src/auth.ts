@@ -2,7 +2,7 @@
 
 const encoder = new TextEncoder();
 export const SESSION_COOKIE = "gym_session";
-export const SESSION_DAYS = 30;
+export const SESSION_DAYS = 365;
 
 /** Compares two strings in time that does not depend on where they differ. */
 export async function safeEqual(a: string, b: string): Promise<boolean> {
@@ -36,10 +36,10 @@ export async function isValidSession(cookie: string | undefined, secret: string 
   return safeEqual(signature, await sign(expires, secret));
 }
 
-/** True once a valid session is past half its life, so regular use keeps you signed in. */
+/** True once a session is more than a week old, so using the app keeps you signed in for a year from the last visit. */
 export function sessionNeedsRefresh(cookie: string, now = Date.now()): boolean {
   const expires = Number(cookie.split(".")[0]);
-  return expires - now < (SESSION_DAYS / 2) * 24 * 60 * 60 * 1000;
+  return expires - now < (SESSION_DAYS - 7) * 24 * 60 * 60 * 1000;
 }
 
 /** Only same-site paths are allowed after sign-in, so the login form cannot redirect elsewhere. */
