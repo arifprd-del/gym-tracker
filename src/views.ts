@@ -95,6 +95,10 @@ svg text { fill: var(--muted); font-size: 11px; }
 .plan-next .swatch { width: 14px; height: 14px; }
 .plan .button { display: inline-block; margin-top: 12px; }
 .nudge { background: var(--nudge-bg); color: var(--text); border-radius: 12px; padding: 12px 14px; margin: 0; font-weight: 500; }
+.step-stats { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0 0 12px; }
+.step-stats b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+.step-stats span { color: var(--muted); font-size: 13px; }
+.goal-line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .login { max-width: 360px; margin: 12vh auto 0; }
 .login form { display: grid; gap: 12px; }
@@ -158,6 +162,11 @@ export type DashboardData = {
   weekly: { week: string; byDay: Record<WorkoutDay, number>; volumeKg: number }[];
   heatmap: { start: string; weeks: number; days: Map<string, TrainingDay>; cardioDays: Map<string, number> };
   cardio: { thisWeekMinutes: number; weekly: { week: string; minutes: number }[]; recent: (CardioRow & { day: string; time: string })[] };
+  steps: {
+    daily: { day: string; steps: number | null }[];
+    summary: { today: number | null; yesterday: number | null; average7: number | null; thisWeek: number; lastSynced: string | null };
+    goal: number;
+  };
   bodyWeight: {
     weekly: { week: string; kg: number | null }[];
     trend: { latest: BodyWeightRow | null; changeKg: number | null; since: string | null };
@@ -338,6 +347,53 @@ function bodyWeightChart(allWeeks: DashboardData["bodyWeight"]["weekly"]): Html 
         : "",
     )}
   </svg>`;
+}
+
+const n = (v: number) => v.toLocaleString("en-GB");
+
+function stepsChart({ daily, goal }: DashboardData["steps"]): Html {
+  const width = 400;
+  const height = 150;
+  const chartHeight = 122;
+  const right = 20; // room for the last date label
+  const max = Math.max(goal * 1.15, ...daily.map((d) => d.steps ?? 0));
+  const slot = (width - right) / daily.length;
+  const barWidth = slot * 0.7;
+  const y = (v: number) => chartHeight - (v / max) * (chartHeight - 10);
+  const bars = daily.map((d, i) => {
+    const x = i * slot + (slot - barWidth) / 2;
+    const label = d.steps === null ? "not synced" : `${n(d.steps)} steps${d.steps >= goal ? " ✓ goal" : ""}`;
+    return html`<g>
+      ${d.steps ? html`<rect x="${x.toFixed(1)}" y="${y(d.steps).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${(chartHeight - y(d.steps)).toFixed(1)}" rx="1.5" fill="var(--accent)"></rect>` : ""}
+      <rect x="${(i * slot).toFixed(1)}" y="0" width="${slot.toFixed(1)}" height="${chartHeight}" fill="transparent"><title>${shortDate(d.day)}: ${label}</title></rect>
+      ${(daily.length - 1 - i) % 7 === 0 ? html`<text x="${(i * slot + slot / 2).toFixed(1)}" y="${height - 8}" text-anchor="middle">${shortDate(d.day)}</text>` : ""}
+    </g>`;
+  });
+  return html`<svg class="volume" viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="Daily steps for the last ${daily.length} days, goal ${n(goal)}">
+    ${bars}
+    <line class="goal-line" x1="0" x2="${width - right}" y1="${y(goal).toFixed(1)}" y2="${y(goal).toFixed(1)}"></line>
+  </svg>`;
+}
+
+function stepsCard(steps: DashboardData["steps"]): Html {
+  const s = steps.summary;
+  if (!s.lastSynced) {
+    return html`<section class="card" id="steps">
+      <h2>Steps</h2>
+      <p class="muted">Not synced yet. Set up the nightly iPhone automation in <b>docs/iphone-setup.md</b> and your daily steps will appear here.</p>
+    </section>`;
+  }
+  const stat = (value: number | null, label: string) => html`<div><b>${value === null ? "–" : n(value)}</b><span>${label}</span></div>`;
+  return html`<section class="card" id="steps">
+    <h2>Steps</h2>
+    <div class="step-stats">
+      ${s.today !== null ? stat(s.today, "today") : stat(s.yesterday, "yesterday")}
+      ${stat(s.average7, "7-day average")}
+      ${stat(s.thisWeek, "this week")}
+    </div>
+    ${stepsChart(steps)}
+    <p class="muted" style="font-size: 13px; margin: 6px 0 0">Dashed line: ${n(steps.goal)}-step daily goal · last synced ${shortDate(s.lastSynced)}</p>
+  </section>`;
 }
 
 function bodyWeightCard(bw: DashboardData["bodyWeight"]): Html {
@@ -521,6 +577,8 @@ export function dashboardPage(data: DashboardData): Html {
       </section>
 
       ${cardioCard(data.cardio)}
+
+      ${stepsCard(data.steps)}
 
       ${bodyWeightCard(data.bodyWeight)}
 

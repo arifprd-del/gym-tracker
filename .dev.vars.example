@@ -1,2 +1,3 @@
-# Copy to .dev.vars for `npm run dev`. The production value is a GitHub secret (see README).
+# Copy to .dev.vars for `npm run dev`. Production values are GitHub secrets (see README).
 DASHBOARD_PASSWORD=change-me
+STEPS_TOKEN=change-me-too

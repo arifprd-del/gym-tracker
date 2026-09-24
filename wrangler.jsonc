@@ -8,7 +8,9 @@
     // Used to decide which day a set belongs to on the dashboard and in "today" answers.
     "TIMEZONE": "Europe/London",
     // Weekly cardio goal on the dashboard checklist.
-    "CARDIO_WEEKLY_MINUTES": "90"
+    "CARDIO_WEEKLY_MINUTES": "90",
+    // Daily steps goal line on the dashboard's steps chart.
+    "STEPS_DAILY_GOAL": "8000"
   },
   "d1_databases": [
     {
@@ -18,5 +20,7 @@
       "migrations_dir": "migrations"
     }
   ]
-  // Secret (set with `npx wrangler secret put DASHBOARD_PASSWORD`, never commit it): the sign-in password.
+  // Secrets (set as GitHub secrets or with `npx wrangler secret put <NAME>`, never commit them):
+  //   DASHBOARD_PASSWORD - the sign-in password
+  //   STEPS_TOKEN        - token the nightly steps automation sends (optional)
 }

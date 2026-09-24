@@ -365,3 +365,44 @@ export function beatTargets(previous: { weight: number; reps: number }): { weigh
   const step = previous.weight >= 20 ? 2.5 : 1;
   return [moreReps, { weight: Math.round((previous.weight + step) * 10) / 10, reps: previous.reps }];
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Steps (synced nightly from the iPhone Health app)
+
+export type StepsRow = { day: string; steps: number };
+
+/** Shortcuts may send 8423, 8423.0, "8423" or "8,423". Returns a whole number of steps, or null if unusable. */
+export function parseSteps(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value.replace(/[\s,]/g, "")) : NaN;
+  if (!Number.isFinite(n) || n < 0 || n > 200_000) return null;
+  return Math.round(n);
+}
+
+/** True for a real calendar date written YYYY-MM-DD. */
+export function isIsoDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  return new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+}
+
+/** The last `days` dates up to and including `today`, oldest first, with steps or null when nothing was synced. */
+export function dailySteps(rows: StepsRow[], days: number, today: string): { day: string; steps: number | null }[] {
+  const byDay = new Map(rows.map((r) => [r.day, r.steps]));
+  return Array.from({ length: days }, (_, i) => {
+    const day = addDays(today, i - days + 1);
+    return { day, steps: byDay.get(day) ?? null };
+  });
+}
+
+/** Headline numbers: today (if synced), yesterday, the average of synced days in the last 7 and this week's total. */
+export function stepsSummary(rows: StepsRow[], today: string) {
+  const byDay = new Map(rows.map((r) => [r.day, r.steps]));
+  const last7 = Array.from({ length: 7 }, (_, i) => byDay.get(addDays(today, -i))).filter((s): s is number => s !== undefined);
+  const thisWeek = weekStart(today);
+  return {
+    today: byDay.get(today) ?? null,
+    yesterday: byDay.get(addDays(today, -1)) ?? null,
+    average7: last7.length ? Math.round(last7.reduce((a, b) => a + b, 0) / last7.length) : null,
+    thisWeek: rows.filter((r) => r.day >= thisWeek && r.day <= today).reduce((sum, r) => sum + r.steps, 0),
+    lastSynced: rows.reduce<string | null>((latest, r) => (!latest || r.day > latest ? r.day : latest), null),
+  };
+}

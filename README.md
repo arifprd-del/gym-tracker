@@ -30,6 +30,10 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   - *Never miss twice*: a gentle banner after 4+ days without training, or late in the week when the streak is at risk.
   - *Beat last time*: on the log screen, your best set from the previous session with one-tap targets (one more rep,
     or +2.5 kg / +1 kg under 20 kg), and a 💪 when you beat it.
+- **Steps:** a nightly iPhone Shortcuts automation posts the day's step total from Health to `/sync/steps` (its own
+  `STEPS_TOKEN`, which can only write step totals). The dashboard shows today or yesterday, the 7-day average, this
+  week's total and a 30-day chart with a goal line (`STEPS_DAILY_GOAL`, default 8,000). Setup is in
+  [docs/iphone-setup.md](docs/iphone-setup.md#nightly-steps-sync).
 - **CSV export** of every set.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and
@@ -45,6 +49,7 @@ Every push to `main` runs the tests, applies any new D1 migrations and deploys t
 | `CLOUDFLARE_API_TOKEN` | A Cloudflare API token from the **Edit Cloudflare Workers** template, with **Account → D1 → Edit** added |
 | `CLOUDFLARE_ACCOUNT_ID` | Your account ID (shown on the Workers & Pages overview page) |
 | `DASHBOARD_PASSWORD` | A long password for signing in |
+| `STEPS_TOKEN` | Optional. A long random value the nightly steps automation sends |
 
 Then run the workflow from the **Actions** tab (**Test and deploy → Run workflow**), or push a commit. The deploy log
 prints your `https://gym-tracker.<subdomain>.workers.dev` URL.

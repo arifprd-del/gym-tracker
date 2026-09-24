@@ -265,3 +265,36 @@ test("habit features", async () => {
   assert.equal(lib.beats({ weight: 80, reps: 6 }, { weight: 80, reps: 6 }), false);
   assert.equal(lib.beats({ weight: 82.5, reps: 3 }, { weight: 80, reps: 6 }), true);
 });
+
+test("steps parsing and summaries", async () => {
+  const { parseSteps, isIsoDate, dailySteps, stepsSummary } = await import("./lib");
+  assert.equal(parseSteps(8423), 8423);
+  assert.equal(parseSteps(8423.6), 8424);
+  assert.equal(parseSteps("8,423"), 8423);
+  assert.equal(parseSteps(" 12 000 "), 12000);
+  assert.equal(parseSteps("lots"), null);
+  assert.equal(parseSteps(-5), null);
+  assert.equal(parseSteps(undefined), null);
+  assert.equal(isIsoDate("2026-09-24"), true);
+  assert.equal(isIsoDate("2026-02-30"), false);
+  assert.equal(isIsoDate("24/09/2026"), false);
+
+  const rows = [
+    { day: "2026-09-20", steps: 6000 }, // Sunday, last week
+    { day: "2026-09-22", steps: 9000 },
+    { day: "2026-09-23", steps: 8000 },
+  ];
+  assert.deepEqual(dailySteps(rows, 3, "2026-09-24"), [
+    { day: "2026-09-22", steps: 9000 },
+    { day: "2026-09-23", steps: 8000 },
+    { day: "2026-09-24", steps: null },
+  ]);
+  assert.deepEqual(stepsSummary(rows, "2026-09-24"), {
+    today: null,
+    yesterday: 8000,
+    average7: 7667, // (6000 + 9000 + 8000) / 3 synced days
+    thisWeek: 17000,
+    lastSynced: "2026-09-23",
+  });
+  assert.equal(stepsSummary([], "2026-09-24").average7, null);
+});

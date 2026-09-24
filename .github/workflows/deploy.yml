@@ -30,6 +30,8 @@ jobs:
     env:
       # Deploying is skipped, not failed, until the Cloudflare secrets are added to the repository.
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+      # The steps sync token is optional; it is uploaded only once the secret exists.
+      HAS_STEPS_TOKEN: ${{ secrets.STEPS_TOKEN != '' }}
     steps:
       - if: env.HAS_CLOUDFLARE != 'true'
         run: echo "::notice::Deploy skipped. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets (see README)."
@@ -56,3 +58,10 @@ jobs:
             deploy
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+      - if: env.HAS_CLOUDFLARE == 'true' && env.HAS_STEPS_TOKEN == 'true'
+        name: Upload the steps sync token
+        run: printf '%s' "$STEPS_TOKEN" | npx wrangler secret put STEPS_TOKEN
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STEPS_TOKEN: ${{ secrets.STEPS_TOKEN }}

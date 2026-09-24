@@ -35,3 +35,42 @@ exercise's tab also sets its colour on the dashboard: blue for Push, orange for 
 
 In the **Shortcuts** app, go to **Automation → + → Arrive**. Choose your gym, select **Run Immediately**, and add an
 **Open URLs** action with your `/log` address.
+
+## Nightly steps sync
+
+Your iPhone sends each day's step total from the Health app to the dashboard's **Steps** card. A website can't read
+Health data itself, so a Shortcuts automation does it every night.
+
+### 1. Add the token (once)
+
+In GitHub, open the repo's **Settings → Secrets and variables → Actions → New repository secret**. Name it
+`STEPS_TOKEN` and paste a long random value, such as 30+ letters and numbers from a password generator. Then run
+**Actions → Test and deploy → Run workflow**. Keep the value handy for step 2, but don't share it anywhere else.
+
+### 2. Build the automation
+
+In the **Shortcuts** app, go to **Automation → + → Time of Day**:
+
+- **Time:** 23:45, **Repeat:** Daily
+- Select **Run Immediately**, then **Next** and **New Blank Automation**
+
+Add these actions:
+
+| # | Action | Settings |
+|---|---|---|
+| 1 | **Find Health Samples** | Type **Steps**. Add the filter **Start Date is Today**. Set **Group By** to **Day**. |
+| 2 | **Calculate Statistics** | **Sum** of *Health Samples* |
+| 3 | **Get Contents of URL** | URL `https://gym-tracker.opinion-2nd.workers.dev/sync/steps`. Tap **Show More**: Method **POST**. Headers: `Authorization` = `Bearer ` followed by your token. Request Body **JSON**: add a **Number** field `steps` set to *Statistics Result*. |
+
+Tap **Done**. To test it, open the automation and tap **▶︎**. Within a few seconds, the Steps card on the dashboard
+shows today's count.
+
+### Tips
+
+- **Numbers higher than the Health app?** If you wear an Apple Watch, iPhone and Watch steps can be counted twice.
+  **Group By Day** normally prevents this. If it still happens, add the filter **Source is** *your iPhone*.
+- **A missed night:** Health data is locked while the phone is locked with a passcode, so a run can occasionally fail.
+  Syncing again replaces that day's total, so the next run fixes today. For a missed earlier day, run the shortcut by
+  hand with the Health filter set to that date and add a **Text** field `date` (`YYYY-MM-DD`) to the JSON. Up to 7 days
+  back is accepted.
+- **Goal line:** the dashed line is 8,000 steps a day. Change `STEPS_DAILY_GOAL` in `wrangler.jsonc` to move it.

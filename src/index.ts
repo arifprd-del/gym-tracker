@@ -19,6 +19,10 @@ import {
   formatCardio,
   beatTargets,
   habitNudge,
+  isIsoDate,
+  parseSteps,
+  dailySteps,
+  stepsSummary,
   lastSessionBest,
   todaysPlan,
   weeklyChecklist,
@@ -39,6 +43,7 @@ import {
   type BodyWeightRow,
   type CardioRow,
   type SetRow,
+  type StepsRow,
 } from "./lib";
 import { logPage, type ExerciseButton } from "./log-page";
 import { dashboardPage, loginPage, type ExerciseRecord } from "./views";
@@ -48,7 +53,15 @@ type Env = {
   DASHBOARD_PASSWORD: string;
   TIMEZONE: string;
   CARDIO_WEEKLY_MINUTES?: string;
+  STEPS_DAILY_GOAL?: string;
+  /** Token the nightly iPhone Shortcuts automation sends to /sync/steps. It can only write step totals. */
+  STEPS_TOKEN?: string;
 };
+
+function stepsGoal(env: Env): number {
+  const goal = Number(env.STEPS_DAILY_GOAL);
+  return Number.isFinite(goal) && goal > 0 ? goal : 8000;
+}
 
 function cardioGoal(env: Env): number {
   const goal = Number(env.CARDIO_WEEKLY_MINUTES);
@@ -237,6 +250,32 @@ app.post("/logout", (c) => {
   return c.redirect("/login");
 });
 
+// Nightly steps sync from an iPhone Shortcuts automation. It sits outside the signed-in area and uses its own token,
+// which can only save step totals: { "steps": 8423 } for today, or add "date": "YYYY-MM-DD" for another day.
+app.post("/sync/steps", async (c) => {
+  if (!c.env.STEPS_TOKEN) return c.json({ message: "Steps sync isn't set up: add the STEPS_TOKEN secret." }, 503);
+  const header = c.req.header("authorization") ?? "";
+  if (!header.startsWith("Bearer ") || !(await safeEqual(header.slice(7).trim(), c.env.STEPS_TOKEN))) {
+    return c.json({ message: "Wrong steps token." }, 401);
+  }
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const steps = parseSteps(body.steps);
+  if (steps === null) return c.json({ message: "Send the day's step count as a number." }, 400);
+  const today = localDay(new Date(), c.env.TIMEZONE);
+  const day = body.date === undefined || body.date === "" ? today : body.date;
+  // Allow today and up to a week back (for a missed night), never the future.
+  if (!isIsoDate(day) || day > today || day < addDays(today, -7)) {
+    return c.json({ message: "The date must be YYYY-MM-DD, within the last 7 days." }, 400);
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO steps (day, steps) VALUES (?, ?)
+     ON CONFLICT (day) DO UPDATE SET steps = excluded.steps, synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+  )
+    .bind(day, steps)
+    .run();
+  return c.json({ message: `Saved ${steps.toLocaleString("en-GB")} steps for ${day}.`, day, steps });
+});
+
 // Everything below needs a signed-in session.
 app.use("*", async (c, next) => {
   const cookie = getCookie(c, SESSION_COOKIE);
@@ -292,6 +331,7 @@ const VOLUME_WEEKS = 12;
 const RECENT_SETS = 40;
 const RECENT_CARDIO = 10;
 const BODY_WEIGHT_WEEKS = 26;
+const STEPS_DAYS = 30;
 
 app.get("/", async (c) => {
   const timeZone = c.env.TIMEZONE;
@@ -301,7 +341,7 @@ app.get("/", async (c) => {
   // One extra day covers time zones ahead of UTC.
   const since = new Date(`${addDays(heatmapStart, -1)}T00:00:00Z`).toISOString();
 
-  const [window, records, exercises, cardioWindow, bodyWeight] = await Promise.all([
+  const [window, records, exercises, cardioWindow, bodyWeight, stepRows] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ? ORDER BY performed_at DESC").bind(since).all<SetRow>(),
     c.env.DB.prepare(
       `SELECT exercise, MAX(weight_kg) AS best_kg, ${RECORD_E1RM} AS best_e1rm, COUNT(*) AS sets, MAX(performed_at) AS last
@@ -310,6 +350,7 @@ app.get("/", async (c) => {
     c.env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
     c.env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ? ORDER BY performed_at DESC").bind(since).all<CardioRow>(),
     c.env.DB.prepare("SELECT * FROM body_weight ORDER BY measured_on DESC").all<BodyWeightRow>(),
+    c.env.DB.prepare("SELECT day, steps FROM steps WHERE day >= ? ORDER BY day").bind(addDays(today, -STEPS_DAYS)).all<StepsRow>(),
   ]);
 
   const sets = window.results;
@@ -354,6 +395,11 @@ app.get("/", async (c) => {
           day: localDay(r.performed_at, timeZone),
           time: new Date(r.performed_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }),
         })),
+      },
+      steps: {
+        daily: dailySteps(stepRows.results, STEPS_DAYS, today),
+        summary: stepsSummary(stepRows.results, today),
+        goal: stepsGoal(c.env),
       },
       bodyWeight: {
         weekly: weeklyBodyWeight(bodyWeight.results, BODY_WEIGHT_WEEKS, today),
