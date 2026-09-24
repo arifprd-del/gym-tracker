@@ -310,3 +310,32 @@ test("steps sync keys", async () => {
   assert.equal(bearerToken("abc123"), null);
   assert.equal(bearerToken(undefined), null);
 });
+
+test("CSV export combines sets, cardio and weigh-ins", async () => {
+  const { exportCsv, csvCell } = await import("./lib");
+  assert.equal(csvCell('said "hi", then left'), '"said ""hi"", then left"');
+  assert.equal(csvCell("=HYPERLINK(1)"), "'=HYPERLINK(1)");
+  assert.equal(csvCell(-2.5), "-2.5"); // numbers are never prefixed
+  assert.equal(csvCell(null), "");
+
+  const csv = exportCsv({
+    timeZone: "Europe/London",
+    sets: [{ id: 1, performed_at: "2026-09-21T17:30:00.000Z", exercise: "bench press", weight_kg: 80, reps: 5, rpe: 8, note: "felt good" }],
+    cardio: [{ id: 1, performed_at: "2026-09-21T18:15:00.000Z", activity: "treadmill", minutes: 20, distance_km: 2.5 }],
+    bodyWeight: [
+      { measured_on: "2026-09-21", weight_kg: 81.3 },
+      { measured_on: "2026-09-14", weight_kg: 81.7 },
+    ],
+  });
+  assert.equal(
+    csv,
+    [
+      "type,date,time,name,weight_kg,reps,minutes,distance_km,rpe,note",
+      "body weight,2026-09-14,,,81.7,,,,,",
+      "body weight,2026-09-21,,,81.3,,,,,",
+      "set,2026-09-21,18:30,Bench Press,80,5,,,8,felt good",
+      "cardio,2026-09-21,19:15,Treadmill,,,20,2.5,,",
+      "",
+    ].join("\n"),
+  );
+});

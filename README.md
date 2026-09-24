@@ -35,7 +35,7 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   step totals; a `STEPS_TOKEN` secret also works). The dashboard shows today or yesterday, the 7-day average, this
   week's total and a 30-day chart with a goal line (`STEPS_DAILY_GOAL`, default 8,000). Setup is in
   [docs/iphone-setup.md](docs/iphone-setup.md#nightly-steps-sync).
-- **CSV export** of every set.
+- **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and
 accept only JSON.

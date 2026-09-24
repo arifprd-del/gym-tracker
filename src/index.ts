@@ -25,6 +25,7 @@ import {
   isIsoDate,
   parseSteps,
   dailySteps,
+  exportCsv,
   stepsSummary,
   lastSessionBest,
   todaysPlan,
@@ -481,21 +482,17 @@ app.post("/body-weight/:date/delete", async (c) => {
   return c.redirect("/#body-weight");
 });
 
+// Everything in one file: sets, cardio and weigh-ins, with a "type" column to filter on in a spreadsheet.
 app.get("/export.csv", async (c) => {
-  const { results } = await c.env.DB.prepare("SELECT * FROM sets ORDER BY performed_at").all<SetRow>();
-  const cell = (v: unknown) => {
-    let s = v === null || v === undefined ? "" : String(v);
-    // Stop spreadsheet apps from running a note such as "=HYPERLINK(...)" as a formula.
-    if (/^[=+\-@]/.test(s) && typeof v === "string") s = `'${s}`;
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const lines = [
-    "performed_at,exercise,weight_kg,reps,rpe,note",
-    ...results.map((s) => [s.performed_at, displayName(s.exercise), s.weight_kg, s.reps, s.rpe, s.note].map(cell).join(",")),
-  ];
-  return c.body(lines.join("\n") + "\n", 200, {
+  const [sets, cardio, bodyWeight] = await Promise.all([
+    c.env.DB.prepare("SELECT * FROM sets").all<SetRow>(),
+    c.env.DB.prepare("SELECT * FROM cardio").all<CardioRow>(),
+    c.env.DB.prepare("SELECT * FROM body_weight").all<BodyWeightRow>(),
+  ]);
+  const csv = exportCsv({ sets: sets.results, cardio: cardio.results, bodyWeight: bodyWeight.results, timeZone: c.env.TIMEZONE });
+  return c.body(csv, 200, {
     "content-type": "text/csv; charset=utf-8",
-    "content-disposition": `attachment; filename="gym-sets-${localDay(new Date(), c.env.TIMEZONE)}.csv"`,
+    "content-disposition": `attachment; filename="arif-gym-${localDay(new Date(), c.env.TIMEZONE)}.csv"`,
   });
 });
 

@@ -406,3 +406,34 @@ export function stepsSummary(rows: StepsRow[], today: string) {
     lastSynced: rows.reduce<string | null>((latest, r) => (!latest || r.day > latest ? r.day : latest), null),
   };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// CSV export: sets, cardio and weigh-ins in one file, one row each, oldest first.
+
+export const CSV_HEADER = ["type", "date", "time", "name", "weight_kg", "reps", "minutes", "distance_km", "rpe", "note"];
+
+/** One CSV cell: quoted when needed, and text that a spreadsheet would run as a formula is made inert. */
+export function csvCell(value: unknown): string {
+  let s = value === null || value === undefined ? "" : String(value);
+  if (typeof value === "string" && /^[=+\-@]/.test(s)) s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+export function exportCsv(input: { sets: SetRow[]; cardio: CardioRow[]; bodyWeight: BodyWeightRow[]; timeZone: string }): string {
+  const time = (iso: string) =>
+    new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: input.timeZone });
+  // Sort key: local date, then time; weigh-ins have no time and sort first on their day.
+  const rows: { key: string; cells: unknown[] }[] = [
+    ...input.sets.map((s) => {
+      const date = localDay(s.performed_at, input.timeZone);
+      return { key: `${date} ${time(s.performed_at)} ${s.performed_at}`, cells: ["set", date, time(s.performed_at), displayName(s.exercise), s.weight_kg, s.reps, null, null, s.rpe, s.note] };
+    }),
+    ...input.cardio.map((c) => {
+      const date = localDay(c.performed_at, input.timeZone);
+      return { key: `${date} ${time(c.performed_at)} ${c.performed_at}`, cells: ["cardio", date, time(c.performed_at), displayName(c.activity), null, null, c.minutes, c.distance_km, null, null] };
+    }),
+    ...input.bodyWeight.map((b) => ({ key: `${b.measured_on} 00:00`, cells: ["body weight", b.measured_on, null, null, b.weight_kg, null, null, null, null, null] })),
+  ];
+  rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return [CSV_HEADER.join(","), ...rows.map((r) => r.cells.map(csvCell).join(","))].join("\n") + "\n";
+}
