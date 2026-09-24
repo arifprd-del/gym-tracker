@@ -27,7 +27,7 @@ main.log { padding-bottom: 345px; gap: 14px; }
 .log header a { font-size: 14px; }
 .log header .row { flex-wrap: nowrap; }
 .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; background: var(--card);
-  border: 1px solid var(--line); border-radius: 14px; position: sticky; top: 8px; z-index: 2; }
+  border: 1px solid var(--line); border-radius: 14px; position: sticky; top: calc(8px + env(safe-area-inset-top)); z-index: 2; }
 .tabs button { border: 0; border-radius: 10px; padding: 12px 2px; font-weight: 600; font-size: 15px; background: none; white-space: nowrap; }
 .tab-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px;
   box-shadow: 0 0 0 2px var(--card); }
@@ -48,7 +48,7 @@ main.log { padding-bottom: 345px; gap: 14px; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; }
 .toolbar button { font-size: 14px; }
 .panel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; background: var(--card); border-top: 1px solid var(--line);
-  padding: 12px 16px calc(14px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 24px rgb(0 0 0 / 0.08); }
+  padding: 12px max(16px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); box-shadow: 0 -8px 24px rgb(0 0 0 / 0.08); }
 .panel-inner { max-width: 960px; margin: 0 auto; display: grid; gap: 10px; }
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-height: 22px; }
 .panel-head b { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

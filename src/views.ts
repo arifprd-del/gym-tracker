@@ -41,7 +41,11 @@ const styles = `
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
+/* In the Home Screen app the page runs under the status bar and notch, so pad by the safe-area insets, and keep a
+   solid strip behind the status bar so scrolled content doesn't show through the clock and battery. */
+body::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top); background: var(--bg); z-index: 10; }
+main { max-width: 960px; margin: 0 auto; display: grid; gap: 16px;
+  padding: calc(20px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); }
 header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 h1 { font-size: 22px; margin: 0; white-space: nowrap; }
 h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
