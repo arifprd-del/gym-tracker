@@ -17,6 +17,11 @@ import {
   cardioMessage,
   cardioMinutesPerDay,
   formatCardio,
+  beatTargets,
+  habitNudge,
+  lastSessionBest,
+  todaysPlan,
+  weeklyChecklist,
   dayLookup,
   displayName,
   formatLoad,
@@ -42,7 +47,13 @@ type Env = {
   DB: D1Database;
   DASHBOARD_PASSWORD: string;
   TIMEZONE: string;
+  CARDIO_WEEKLY_MINUTES?: string;
 };
+
+function cardioGoal(env: Env): number {
+  const goal = Number(env.CARDIO_WEEKLY_MINUTES);
+  return Number.isFinite(goal) && goal > 0 ? goal : 90;
+}
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -230,7 +241,8 @@ app.post("/logout", (c) => {
 app.use("*", async (c, next) => {
   const cookie = getCookie(c, SESSION_COOKIE);
   if (!cookie || !(await isValidSession(cookie, c.env.DASHBOARD_PASSWORD))) {
-    const path = new URL(c.req.url).pathname;
+    const url = new URL(c.req.url);
+    const path = url.pathname + url.search; // keep e.g. ?tab=legs through sign-in
     return c.redirect(path === "/" ? "/login" : `/login?next=${encodeURIComponent(path)}`);
   }
   // Keep people who use the app regularly signed in.
@@ -241,7 +253,8 @@ app.use("*", async (c, next) => {
 // Touch-friendly logging screen.
 app.get("/log", async (c) => {
   const timeZone = c.env.TIMEZONE;
-  const [buttons, lastSets, today, lastCardio, cardio] = await Promise.all([
+  const historySince = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+  const [buttons, lastSets, today, lastCardio, cardio, history] = await Promise.all([
     c.env.DB.prepare("SELECT name, day FROM exercises ORDER BY day, position, name").all<ExerciseButton>(),
     c.env.DB.prepare(
       "SELECT s.* FROM sets s JOIN (SELECT MAX(id) AS id FROM sets GROUP BY exercise) latest ON s.id = latest.id",
@@ -251,12 +264,21 @@ app.get("/log", async (c) => {
       "SELECT c.* FROM cardio c JOIN (SELECT MAX(id) AS id FROM cardio GROUP BY activity) latest ON c.id = latest.id ORDER BY c.id DESC",
     ).all<CardioRow>(),
     cardioToday(c.env.DB, timeZone),
+    c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ?").bind(historySince).all<SetRow>(),
   ]);
+  const todayDate = localDay(new Date(), timeZone);
+  const trained = trainingDaysByType(history.results, dayLookup(buttons.results), timeZone);
+  const plan = todaysPlan(trained, todayDate);
   return c.html(
     logPage({
       exercises: buttons.results,
       last: Object.fromEntries(lastSets.results.map((s) => [s.exercise, { weight: s.weight_kg, reps: s.reps }])),
       today: today.map((s) => ({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at })),
+      plan: plan.next,
+      doneToday: plan.doneToday,
+      previous: Object.fromEntries(
+        [...lastSessionBest(history.results, timeZone, todayDate)].map(([name, best]) => [name, { ...best, targets: beatTargets(best) }]),
+      ),
       cardio: {
         last: Object.fromEntries(lastCardio.results.map((r) => [r.activity, { minutes: r.minutes, distance: r.distance_km }])),
         today: cardio.map((r) => ({ id: r.id, activity: r.activity, minutes: r.minutes, distance: r.distance_km, at: r.performed_at })),
@@ -297,17 +319,35 @@ app.get("/", async (c) => {
   const cardioDays = cardioMinutesPerDay(cardio, timeZone);
   const activeDays = new Set([...days.keys(), ...cardioDays.keys()]);
   const thisWeek = weekStart(today);
+  const streak = weekStreak(activeDays, today);
+  const plan = todaysPlan(days, today);
+  const cardioThisWeek = [...cardioDays].filter(([d]) => d >= thisWeek).reduce((sum, [, m]) => sum + m, 0);
+  const weighedInThisWeek = bodyWeight.results.some((r) => r.measured_on >= thisWeek && r.measured_on <= today);
+  const lastOfNext = lastTrained(days)[plan.next];
 
   return c.html(
     dashboardPage({
+      habits: {
+        plan: plan.next,
+        doneToday: plan.doneToday,
+        lastOfNext,
+        nudge: habitNudge({ activeDays, weekStreak: streak, today, next: plan.next }),
+        checklist: weeklyChecklist({
+          days,
+          cardioMinutesThisWeek: cardioThisWeek,
+          cardioGoalMinutes: cardioGoal(c.env),
+          weighedInThisWeek,
+          today,
+        }),
+      },
       today,
       todaySummary: summarizeSets(sets.filter((s) => localDay(s.performed_at, timeZone) === today).reverse()),
-      weekStreak: weekStreak(activeDays, today),
+      weekStreak: streak,
       sessionsThisWeek: [...activeDays].filter((d) => d >= thisWeek).length,
       weekly: weeklyVolumeByDay(sets, dayOf, timeZone, VOLUME_WEEKS, now),
       heatmap: { start: heatmapStart, weeks: HEATMAP_WEEKS, days, cardioDays },
       cardio: {
-        thisWeekMinutes: [...cardioDays].filter(([d]) => d >= thisWeek).reduce((sum, [, m]) => sum + m, 0),
+        thisWeekMinutes: cardioThisWeek,
         weekly: weeklyCardioMinutes(cardio, timeZone, VOLUME_WEEKS, now),
         recent: cardio.slice(0, RECENT_CARDIO).map((r) => ({
           ...r,
@@ -319,7 +359,7 @@ app.get("/", async (c) => {
         weekly: weeklyBodyWeight(bodyWeight.results, BODY_WEIGHT_WEEKS, today),
         trend: bodyWeightTrend(bodyWeight.results),
         recent: bodyWeight.results.slice(0, 6),
-        loggedThisWeek: bodyWeight.results.some((r) => r.measured_on >= thisWeek && r.measured_on <= today),
+        loggedThisWeek: weighedInThisWeek,
       },
       lastTrained: lastTrained(days),
       dayOf,

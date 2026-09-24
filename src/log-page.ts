@@ -1,4 +1,5 @@
 import { html, raw } from "hono/html";
+import type { SplitDay } from "./lib";
 import { layout } from "./views";
 
 // Touch-first logging screen: pick a day, tap an exercise, adjust weight and reps, tap "Log set".
@@ -10,6 +11,11 @@ export type LogPageData = {
   exercises: ExerciseButton[];
   last: Record<string, { weight: number; reps: number }>;
   today: { id: number; exercise: string; weight: number; reps: number; at: string }[];
+  /** Next day in the push / pull / legs rotation, and the split day already done today, if any. */
+  plan: SplitDay;
+  doneToday: SplitDay | null;
+  /** Best set of the previous session per exercise, with one-tap targets to beat it. */
+  previous: Record<string, { day: string; weight: number; reps: number; targets: { weight: number; reps: number }[] }>;
   cardio: {
     last: Record<string, { minutes: number; distance: number | null }>;
     today: { id: number; activity: string; minutes: number; distance: number | null; at: string }[];
@@ -17,7 +23,7 @@ export type LogPageData = {
 };
 
 const styles = `
-main.log { padding-bottom: 300px; gap: 14px; }
+main.log { padding-bottom: 345px; gap: 14px; }
 .log header a { font-size: 14px; }
 .log header .row { flex-wrap: nowrap; }
 .tabs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; background: var(--card);
@@ -30,8 +36,9 @@ main.log { padding-bottom: 300px; gap: 14px; }
 @media (min-width: 640px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .tile { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; min-height: 76px;
   padding: 10px 14px; border-radius: 14px; border: 2px solid var(--line); background: var(--card); color: var(--text);
-  font: inherit; text-align: left; cursor: pointer; position: relative; -webkit-tap-highlight-color: transparent; }
-.tile .name { font-weight: 650; font-size: 16px; line-height: 1.25; }
+  font: inherit; text-align: left; cursor: pointer; position: relative; -webkit-tap-highlight-color: transparent;
+  white-space: normal; }
+.tile .name { font-weight: 650; font-size: 16px; line-height: 1.25; max-width: 100%; overflow-wrap: anywhere; }
 .tile .meta { color: var(--muted); font-size: 13px; }
 .tile[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .tile .badge { position: absolute; top: 8px; right: 10px; font-size: 12px; font-weight: 700; color: var(--accent); }
@@ -46,6 +53,10 @@ main.log { padding-bottom: 300px; gap: 14px; }
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-height: 22px; }
 .panel-head b { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rest { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hint { display: flex; align-items: center; gap: 8px; min-height: 34px; font-size: 14px; color: var(--muted); overflow-x: auto; white-space: nowrap; }
+.chip { border-radius: 999px; padding: 6px 12px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); font-weight: 650; font-size: 14px; touch-action: manipulation; }
+.plan-hint { color: var(--muted); font-size: 14px; }
+.plan-hint b { color: var(--text); }
 .steppers { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .steppers[hidden] { display: none; }
 .stepper { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; background: var(--bg);
@@ -58,7 +69,7 @@ main.log { padding-bottom: 300px; gap: 14px; }
 .stepper small { color: var(--muted); font-size: 12px; }
 .log-button { height: 56px; border-radius: 14px; font-size: 18px; font-weight: 700; touch-action: manipulation; }
 .log-button:disabled { opacity: 0.45; }
-.toast { position: fixed; left: 16px; right: 16px; bottom: calc(230px + env(safe-area-inset-bottom)); z-index: 4;
+.toast { position: fixed; left: 16px; right: 16px; bottom: calc(275px + env(safe-area-inset-bottom)); z-index: 4;
   max-width: 560px; margin: 0 auto; background: var(--text); color: var(--bg); border-radius: 14px; padding: 12px 14px;
   display: flex; gap: 12px; align-items: center; justify-content: space-between; font-size: 15px;
   transition: opacity .2s, transform .2s; }
@@ -80,7 +91,7 @@ const $ = (id) => document.getElementById(id);
 const els = { tabs: $("tabs"), grid: $("grid"), today: $("today"), todayCard: $("today-card"), selected: $("selected"),
   rest: $("rest"), weight: $("weight"), reps: $("reps"), log: $("log"), toast: $("toast"), toastText: $("toast-text"),
   undo: $("undo"), edit: $("edit"), liftSteppers: $("lift-steppers"), cardioSteppers: $("cardio-steppers"),
-  minutes: $("minutes"), distance: $("distance") };
+  minutes: $("minutes"), distance: $("distance"), hint: $("hint"), planHint: $("plan-hint") };
 const state = { tab: "push", selected: null, cardioSelected: null, extraActivities: [], editing: false, restFrom: null, lastLogged: null };
 
 const title = (n) => n.replace(/(^|\\s)(\\S)/g, (m, s, c) => s + c.toUpperCase());
@@ -90,7 +101,16 @@ const load = (w, r) => (w > 0 ? fmt(w) + " kg × " + r : "BW × " + r);
 const cardioLoad = (m, d) => fmt(m) + " min" + (d ? " · " + fmt(d) + " km" : "");
 const readNumber = (input) => Number(String(input.value).trim().replace(",", "."));
 
-try { const saved = localStorage.getItem("gym-tab"); if (saved) state.tab = saved; } catch {}
+// Open on the tab asked for in the link, else today's planned day until something is logged, else the last tab used.
+const requested = new URLSearchParams(location.search).get("tab");
+const nothingToday = data.today.length === 0 && data.cardio.today.length === 0;
+if ([...DAYS, "cardio"].includes(requested)) state.tab = requested;
+else if (nothingToday && !data.doneToday) state.tab = data.plan;
+else { try { const saved = localStorage.getItem("gym-tab"); if (saved) state.tab = saved; } catch {} }
+els.planHint.replaceChildren(
+  data.doneToday ? LABELS[data.doneToday] + " done today ✓" : "Today's plan: ",
+  data.doneToday ? "" : el("b", { textContent: LABELS[data.plan] }),
+);
 
 function otherExercises() {
   const assigned = new Set(data.exercises.map((e) => e.name));
@@ -161,7 +181,8 @@ function renderGrid() {
   if (isCardio()) return renderCardioGrid();
   els.edit.textContent = state.editing ? "Done" : "Edit list";
   const tiles = exercisesFor(state.tab).map((name) => {
-    const last = data.last[name];
+    const previous = data.previous[name];
+    const last = previous || data.last[name];
     const count = setsToday(name);
     const b = el("button", { type: "button", className: "tile" }, [
       el("span", { className: "name", textContent: title(name) }),
@@ -223,7 +244,35 @@ function renderToday() {
   tick();
 }
 
+// "Beat last time": the previous session's best set, with one-tap targets that fill in the steppers.
+const beats = (set, previous) => set.weight > previous.weight || (set.weight === previous.weight && set.reps > previous.reps);
+function beatenToday(name) {
+  const previous = data.previous[name];
+  return Boolean(previous) && data.today.some((s) => s.exercise === name && beats(s, previous));
+}
+function chip(text, onTap) {
+  const b = el("button", { type: "button", className: "chip", textContent: text });
+  b.onclick = onTap;
+  return b;
+}
+function renderHint() {
+  if (isCardio()) {
+    const last = state.cardioSelected && data.cardio.last[state.cardioSelected];
+    if (!last) return els.hint.replaceChildren();
+    const target = Math.round(last.minutes) + 5;
+    return els.hint.replaceChildren("Last time " + cardioLoad(last.minutes, last.distance) + " · try", chip(target + " min", () => { els.minutes.value = String(target); }));
+  }
+  const previous = state.selected && data.previous[state.selected];
+  if (!previous) return els.hint.replaceChildren(state.selected ? "First time? Pick a weight you can do with good form." : "");
+  if (beatenToday(state.selected)) return els.hint.replaceChildren("💪 Beat last time (" + load(previous.weight, previous.reps) + ") today");
+  els.hint.replaceChildren(
+    "Beat " + load(previous.weight, previous.reps) + ":",
+    ...previous.targets.map((t) => chip(load(t.weight, t.reps), () => { els.weight.value = fmt(t.weight); els.reps.value = String(t.reps); })),
+  );
+}
+
 function renderPanel() {
+  renderHint();
   const cardio = isCardio();
   const selected = cardio ? state.cardioSelected : state.selected;
   els.liftSteppers.hidden = cardio;
@@ -327,9 +376,11 @@ els.log.addEventListener("click", async () => {
     const result = await api("/api/log", { exercise, weight, reps });
     const s = result.set;
     data.last[s.exercise] = { weight: s.weight_kg, reps: s.reps };
-    data.today.push({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at });
     state.lastLogged = { kind: "set", id: s.id };
-    toast((result.personalBest ? "🏆 " : "✓ ") + result.message, true);
+    const previous = data.previous[s.exercise];
+    const beatNow = previous && beats({ weight: s.weight_kg, reps: s.reps }, previous) && !beatenToday(s.exercise);
+    data.today.push({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at });
+    toast(result.personalBest ? "🏆 " + result.message : beatNow ? "💪 Beat last time! " + result.message : "✓ " + result.message, true);
     renderToday();
     render();
   } catch (error) {
@@ -414,7 +465,7 @@ export function logPage(data: LogPageData) {
         <nav class="tabs" id="tabs" aria-label="Workout day"></nav>
 
         <section>
-          <div class="toolbar"><span></span><button type="button" id="edit">Edit list</button></div>
+          <div class="toolbar"><span class="plan-hint" id="plan-hint"></span><button type="button" id="edit">Edit list</button></div>
           <div class="grid" id="grid"></div>
         </section>
 
@@ -432,6 +483,7 @@ export function logPage(data: LogPageData) {
       <div class="panel">
         <div class="panel-inner">
           <div class="panel-head"><b id="selected">Tap an exercise</b><span class="rest" id="rest"></span></div>
+          <div class="hint" id="hint" aria-live="polite"></div>
           <div class="steppers" id="lift-steppers">
             <div class="stepper">
               <button type="button" data-step="-2.5" data-target="weight" aria-label="Less weight">−</button>

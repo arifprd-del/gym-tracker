@@ -22,6 +22,14 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   training-days calendar coloured by workout type, a week streak, personal records with an estimated one-rep max, and
   recent sets with delete buttons. Cardio has its own minutes-per-week chart, and cardio days are marked with a dot on
   the calendar. It supports light and dark mode and works on a phone.
+- **Habit features (Atomic Habits):**
+  - *This week* checklist: Push, Pull, Legs, the cardio goal (`CARDIO_WEEKLY_MINUTES` in `wrangler.jsonc`, default 90)
+    and a weigh-in, with a progress bar and a "Week complete" state.
+  - *Next workout*: the next day in the Push → Pull → Legs rotation. The log screen opens on it until you've logged
+    something today.
+  - *Never miss twice*: a gentle banner after 4+ days without training, or late in the week when the streak is at risk.
+  - *Beat last time*: on the log screen, your best set from the previous session with one-tap targets (one more rep,
+    or +2.5 kg / +1 kg under 20 kg), and a 💪 when you beat it.
 - **CSV export** of every set.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and

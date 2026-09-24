@@ -192,3 +192,76 @@ test("weekly body weight and trend", async () => {
   assert.deepEqual(bodyWeightTrend([rows[0]]), { latest: rows[0], changeKg: null, since: null });
   assert.deepEqual(bodyWeightTrend([]), { latest: null, changeKg: null, since: null });
 });
+
+test("habit features", async () => {
+  const lib = await import("./lib");
+  const dayOf = lib.dayLookup([
+    { name: "bench press", day: "push" },
+    { name: "pull up", day: "pull" },
+    { name: "squat", day: "legs" },
+  ]);
+  const days = lib.trainingDaysByType(
+    [
+      set("2026-09-15T08:00:00.000Z", "squat", 100, 5), // Tue last week: legs
+      set("2026-09-21T08:00:00.000Z", "bench press", 80, 5), // Mon: push
+      set("2026-09-23T08:00:00.000Z", "pull up", 0, 8), // Wed: pull
+    ],
+    dayOf,
+    "UTC",
+  );
+
+  // Today's plan follows the rotation after the latest split day.
+  assert.deepEqual(lib.todaysPlan(days, "2026-09-24"), { next: "legs", doneToday: null });
+  assert.deepEqual(lib.todaysPlan(days, "2026-09-23"), { next: "legs", doneToday: "pull" });
+  assert.deepEqual(lib.todaysPlan(new Map(), "2026-09-23"), { next: "push", doneToday: null });
+
+  // Weekly checklist for the week of Mon 21 Sept.
+  const list = lib.weeklyChecklist({ days, cardioMinutesThisWeek: 55, cardioGoalMinutes: 90, weighedInThisWeek: true, today: "2026-09-24" });
+  assert.deepEqual(
+    list.map((i) => [i.key, i.done, i.detail]),
+    [
+      ["push", true, "Mon"],
+      ["pull", true, "Wed"],
+      ["legs", false, ""],
+      ["cardio", false, "55/90 min"],
+      ["weigh-in", true, ""],
+    ],
+  );
+
+  // Never miss twice.
+  const nudge = (activeDays: string[], today: string, weekStreak = 0) =>
+    lib.habitNudge({ activeDays, weekStreak, today, next: "legs" });
+  assert.equal(nudge(["2026-09-18"], "2026-09-21"), null); // Fri -> Mon is a normal weekend
+  assert.equal(nudge(["2026-09-18"], "2026-09-22"), "It's been 4 days. Missing once is fine, never miss twice: Legs today.");
+  assert.equal(nudge(["2026-09-24"], "2026-09-24"), null); // trained today
+  assert.equal(
+    nudge(["2026-09-17"], "2026-09-26", 5), // Saturday, nothing this week
+    "No session yet this week. One Legs day keeps your 5-week streak going.",
+  );
+
+  // Beat last time uses the best set of the previous session, not today's sets.
+  const best = lib.lastSessionBest(
+    [
+      set("2026-09-14T08:00:00.000Z", "bench press", 85, 3),
+      set("2026-09-21T08:00:00.000Z", "bench press", 80, 5),
+      set("2026-09-21T08:05:00.000Z", "bench press", 80, 6),
+      set("2026-09-21T08:10:00.000Z", "bench press", 77.5, 8),
+      set("2026-09-24T08:00:00.000Z", "bench press", 90, 1), // today, ignored
+    ],
+    "UTC",
+    "2026-09-24",
+  );
+  assert.deepEqual(best.get("bench press"), { day: "2026-09-21", weight: 80, reps: 6 });
+  assert.deepEqual(lib.beatTargets({ weight: 80, reps: 6 }), [
+    { weight: 80, reps: 7 },
+    { weight: 82.5, reps: 6 },
+  ]);
+  assert.deepEqual(lib.beatTargets({ weight: 8, reps: 12 }), [
+    { weight: 8, reps: 13 },
+    { weight: 9, reps: 12 },
+  ]);
+  assert.deepEqual(lib.beatTargets({ weight: 0, reps: 8 }), [{ weight: 0, reps: 9 }]);
+  assert.equal(lib.beats({ weight: 80, reps: 7 }, { weight: 80, reps: 6 }), true);
+  assert.equal(lib.beats({ weight: 80, reps: 6 }, { weight: 80, reps: 6 }), false);
+  assert.equal(lib.beats({ weight: 82.5, reps: 3 }, { weight: 80, reps: 6 }), true);
+});

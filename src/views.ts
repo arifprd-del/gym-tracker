@@ -10,6 +10,7 @@ import {
   SPLIT_DAYS,
   WORKOUT_DAYS,
   type BodyWeightRow,
+  type ChecklistItem,
   type CardioRow,
   type DayOf,
   type DaySummary,
@@ -25,7 +26,7 @@ const styles = `
 :root {
   --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #5f6673; --line: #e3e6eb;
   --accent: #2563eb; --accent-soft: #dbe6fd; --on-accent: #ffffff; --danger: #c52a2a;
-  --heat-0: #e8ebf0;
+  --heat-0: #e8ebf0; --nudge-bg: #fff1d6;
   --push: #2a78d6; --pull: #eb6834; --legs: #1baf7a; --other: #9aa0aa; --cardio: #4a3aa7;
   color-scheme: light;
 }
@@ -33,7 +34,7 @@ const styles = `
   :root {
     --bg: #0f1115; --card: #181b21; --text: #e8eaee; --muted: #9aa1ad; --line: #2a2f38;
     --accent: #6d9bff; --accent-soft: #1f2b44; --on-accent: #0f1115; --danger: #ff7474;
-    --heat-0: #232833;
+    --heat-0: #232833; --nudge-bg: #3a2f17;
     --push: #3987e5; --pull: #d95926; --legs: #199e70; --other: #5b6270; --cardio: #9085e9;
     color-scheme: dark;
   }
@@ -77,11 +78,29 @@ svg text { fill: var(--muted); font-size: 11px; }
 .callout { background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; margin: 0 0 12px; font-size: 14px; }
 .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .point { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+.habits { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+@media (max-width: 640px) { .habits { grid-template-columns: 1fr; } }
+.habits .card h2 { display: flex; justify-content: space-between; }
+.check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.check-list li { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.check { width: 22px; height: 22px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  border: 2px solid var(--c); color: var(--card); font-size: 13px; font-weight: 800; line-height: 1; }
+.check.done { background: var(--c); }
+.check-list .detail { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.progress { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 0 0 14px; }
+.progress span { height: 6px; border-radius: 3px; background: var(--heat-0); }
+.progress span.done { background: var(--accent); }
+.complete { border-color: var(--accent); }
+.plan-next { display: flex; align-items: center; gap: 10px; font-size: 26px; font-weight: 700; margin: 2px 0 4px; }
+.plan-next .swatch { width: 14px; height: 14px; }
+.plan .button { display: inline-block; margin-top: 12px; }
+.nudge { background: var(--nudge-bg); color: var(--text); border-radius: 12px; padding: 12px 14px; margin: 0; font-weight: 500; }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .login { max-width: 360px; margin: 12vh auto 0; }
 .login form { display: grid; gap: 12px; }
 input { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 .error { color: var(--danger); margin: 0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 `;
 
 export function layout(title: string, body: Html, head: Html | string = ""): Html {
@@ -125,6 +144,13 @@ export function loginPage(error?: string, next = "/"): Html {
 export type ExerciseRecord = { exercise: string; best_kg: number; best_e1rm: number; sets: number; last: string };
 
 export type DashboardData = {
+  habits: {
+    plan: SplitDay;
+    doneToday: SplitDay | null;
+    lastOfNext: string | null;
+    nudge: string | null;
+    checklist: ChecklistItem[];
+  };
   today: string;
   todaySummary: DaySummary;
   weekStreak: number;
@@ -373,6 +399,41 @@ function cardioCard(cardio: DashboardData["cardio"]): Html {
   </section>`;
 }
 
+function checkColour(key: string): string {
+  if (key === "weigh-in") return "var(--accent)";
+  return `var(--${key})`;
+}
+
+function habitCards(h: DashboardData["habits"], today: string): Html {
+  const done = h.checklist.filter((i) => i.done).length;
+  const complete = done === h.checklist.length;
+  const next = DAY_LABELS[h.plan];
+  return html`${h.nudge ? html`<p class="nudge" role="status">${h.nudge}</p>` : ""}
+    <section class="habits">
+      <div class="card${complete ? " complete" : ""}">
+        <h2><span>${complete ? "Week complete 🎉" : "This week"}</span><span>${done}/${h.checklist.length}</span></h2>
+        <div class="progress" aria-hidden="true">${h.checklist.map((i) => html`<span class="${i.done ? "done" : ""}"></span>`)}</div>
+        <ul class="check-list">
+          ${h.checklist.map(
+            (i) => html`<li>
+              <span class="check${i.done ? " done" : ""}" style="--c: ${checkColour(i.key)}" aria-hidden="true">${i.done ? "✓" : ""}</span>
+              <span>${i.label}<span class="visually-hidden">${i.done ? " (done)" : " (to do)"}</span></span>
+              <span class="detail">${i.detail}</span>
+            </li>`,
+          )}
+        </ul>
+      </div>
+      <div class="card plan">
+        <h2>Next workout</h2>
+        ${h.doneToday ? html`<p class="muted" style="margin: 0 0 6px">${DAY_LABELS[h.doneToday]} done today ✓ · next time:</p>` : ""}
+        <div class="plan-next"><span class="swatch" style="background: var(--${h.plan})"></span>${next}</div>
+        <span class="muted">${h.lastOfNext ? `Last ${next}: ${daysAgo(h.lastOfNext, today).toLowerCase()}` : `Start your ${next} rotation`}</span>
+        <br />
+        <a class="button primary" href="/log?tab=${h.plan}">${h.doneToday ? "Open log" : `Start ${next} →`}</a>
+      </div>
+    </section>`;
+}
+
 function splitTiles(last: DashboardData["lastTrained"], today: string): Html {
   return html`<section class="split" aria-label="Last workout of each type">
     ${SPLIT_DAYS.map((d) => {
@@ -419,6 +480,8 @@ export function dashboardPage(data: DashboardData): Html {
           <form method="post" action="/logout"><button type="submit">Sign out</button></form>
         </div>
       </header>
+
+      ${habitCards(data.habits, data.today)}
 
       <section class="stats" aria-label="Summary">
         <div class="stat"><b>${t.sets}</b><span>sets today</span></div>

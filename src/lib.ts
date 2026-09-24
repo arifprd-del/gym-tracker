@@ -254,3 +254,114 @@ export function bodyWeightTrend(rows: BodyWeightRow[], days = 28): { latest: Bod
   if (!earlier || earlier === latest) return { latest, changeKg: null, since: null };
   return { latest, changeKg: Math.round((latest.weight_kg - earlier.weight_kg) * 10) / 10, since: earlier.measured_on };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Habit features: today's plan, the weekly checklist, "never miss twice" nudges and "beat last time" targets.
+
+const NEXT_DAY: Record<SplitDay, SplitDay> = { push: "pull", pull: "legs", legs: "push" };
+
+/**
+ * Next workout in the push -> pull -> legs rotation, following the most recent day whose main type was a split day.
+ * If that day is today, it is also returned as `doneToday`.
+ */
+export function todaysPlan(days: Map<string, TrainingDay>, today: string): { next: SplitDay; doneToday: SplitDay | null } {
+  let lastDate = "";
+  let lastDay: SplitDay | null = null;
+  for (const [date, entry] of days) {
+    if (entry.main === "other" || date > today) continue;
+    if (date > lastDate) {
+      lastDate = date;
+      lastDay = entry.main;
+    }
+  }
+  if (!lastDay) return { next: "push", doneToday: null };
+  return { next: NEXT_DAY[lastDay], doneToday: lastDate === today ? lastDay : null };
+}
+
+export type ChecklistItem = { key: string; label: string; done: boolean; detail: string };
+
+/** This week's (Monday to Sunday) goals: each split day once, the cardio minutes goal and a weigh-in. */
+export function weeklyChecklist(input: {
+  days: Map<string, TrainingDay>;
+  cardioMinutesThisWeek: number;
+  cardioGoalMinutes: number;
+  weighedInThisWeek: boolean;
+  today: string;
+}): ChecklistItem[] {
+  const thisWeek = weekStart(input.today);
+  const doneOn = (day: SplitDay) =>
+    [...input.days]
+      .filter(([date, entry]) => date >= thisWeek && date <= input.today && entry.main === day)
+      .map(([date]) => date)
+      .sort()[0];
+  const weekday = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
+  const items: ChecklistItem[] = SPLIT_DAYS.map((day) => {
+    const date = doneOn(day);
+    return { key: day, label: day[0].toUpperCase() + day.slice(1), done: Boolean(date), detail: date ? weekday(date) : "" };
+  });
+  const minutes = Math.round(input.cardioMinutesThisWeek);
+  items.push({
+    key: "cardio",
+    label: "Cardio",
+    done: minutes >= input.cardioGoalMinutes,
+    detail: `${minutes}/${input.cardioGoalMinutes} min`,
+  });
+  items.push({ key: "weigh-in", label: "Weigh-in", done: input.weighedInThisWeek, detail: "" });
+  return items;
+}
+
+/**
+ * A gentle "never miss twice" nudge, or null. `activeDays` are dates with any training (lifting or cardio).
+ * A normal Friday-to-Monday weekend is a 3-day gap, so the nudge starts after 4 days.
+ */
+export function habitNudge(input: {
+  activeDays: Iterable<string>;
+  weekStreak: number;
+  today: string;
+  next: SplitDay;
+}): string | null {
+  const dates = [...input.activeDays].filter((d) => d <= input.today).sort();
+  const last = dates[dates.length - 1];
+  const label = input.next[0].toUpperCase() + input.next.slice(1);
+  if (!last || last === input.today) return null;
+  const gap = Math.round((Date.parse(`${input.today}T00:00:00Z`) - Date.parse(`${last}T00:00:00Z`)) / 86_400_000);
+  const weekday = new Date(`${input.today}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  const thisWeek = weekStart(input.today);
+  const lateInWeek = weekday === 0 || weekday >= 5;
+  if (input.weekStreak > 0 && last < thisWeek && lateInWeek) {
+    return `No session yet this week. One ${label} day keeps your ${input.weekStreak}-week streak going.`;
+  }
+  if (gap >= 4) return `It's been ${gap} days. Missing once is fine, never miss twice: ${label} today.`;
+  return null;
+}
+
+export type LastSession = { day: string; weight: number; reps: number };
+
+/** For each exercise, the best set (heaviest, then most reps) from the most recent day before today. */
+export function lastSessionBest(sets: SetRow[], timeZone: string, today: string): Map<string, LastSession> {
+  const best = new Map<string, LastSession>();
+  for (const s of sets) {
+    const day = localDay(s.performed_at, timeZone);
+    if (day >= today) continue;
+    const current = best.get(s.exercise);
+    const better =
+      !current ||
+      day > current.day ||
+      (day === current.day && (s.weight_kg > current.weight || (s.weight_kg === current.weight && s.reps > current.reps)));
+    if (better) best.set(s.exercise, { day, weight: s.weight_kg, reps: s.reps });
+  }
+  return best;
+}
+
+/** Heavier, or the same weight for more reps. Bodyweight sets compare reps only. */
+export function beats(set: { weight: number; reps: number }, previous: { weight: number; reps: number }): boolean {
+  return set.weight > previous.weight || (set.weight === previous.weight && set.reps > previous.reps);
+}
+
+/** One-tap targets for beating last time: one more rep, or a small jump in weight at the same reps. */
+export function beatTargets(previous: { weight: number; reps: number }): { weight: number; reps: number }[] {
+  const moreReps = { weight: previous.weight, reps: previous.reps + 1 };
+  if (previous.weight === 0) return [moreReps];
+  const step = previous.weight >= 20 ? 2.5 : 1;
+  return [moreReps, { weight: Math.round((previous.weight + step) * 10) / 10, reps: previous.reps }];
+}

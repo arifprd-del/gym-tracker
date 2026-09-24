@@ -6,7 +6,9 @@
   "observability": { "enabled": true },
   "vars": {
     // Used to decide which day a set belongs to on the dashboard and in "today" answers.
-    "TIMEZONE": "Europe/London"
+    "TIMEZONE": "Europe/London",
+    // Weekly cardio goal on the dashboard checklist.
+    "CARDIO_WEEKLY_MINUTES": "90"
   },
   "d1_databases": [
     {
