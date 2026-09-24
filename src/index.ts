@@ -4,7 +4,10 @@ import { z } from "zod";
 import {
   SESSION_COOKIE,
   SESSION_DAYS,
+  bearerToken,
   createSession,
+  newSyncKey,
+  sha256Hex,
   isValidSession,
   safeEqual,
   safeNextPath,
@@ -46,7 +49,7 @@ import {
   type StepsRow,
 } from "./lib";
 import { logPage, type ExerciseButton } from "./log-page";
-import { dashboardPage, loginPage, type ExerciseRecord } from "./views";
+import { dashboardPage, loginPage, stepsKeyPage, type ExerciseRecord } from "./views";
 
 type Env = {
   DB: D1Database;
@@ -252,12 +255,25 @@ app.post("/logout", (c) => {
 
 // Nightly steps sync from an iPhone Shortcuts automation. It sits outside the signed-in area and uses its own token,
 // which can only save step totals: { "steps": 8423 } for today, or add "date": "YYYY-MM-DD" for another day.
+// Accepts the sync key made on the dashboard (stored as a hash) or the STEPS_TOKEN secret.
 app.post("/sync/steps", async (c) => {
-  if (!c.env.STEPS_TOKEN) return c.json({ message: "Steps sync isn't set up: add the STEPS_TOKEN secret." }, 503);
-  // Ignore stray spaces or line breaks from copy and paste on either side, and the case of "Bearer".
-  const match = /^\s*bearer\s+(.+?)\s*$/i.exec(c.req.header("authorization") ?? "");
-  if (!match || !(await safeEqual(match[1], c.env.STEPS_TOKEN.trim()))) {
-    return c.json({ message: "Wrong steps token." }, 401);
+  const stored = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'steps_key_sha256'").first<{ value: string }>();
+  if (!stored && !c.env.STEPS_TOKEN) {
+    return c.json({ message: "Steps sync isn't set up yet. Create a sync key on the dashboard's Steps card." }, 503);
+  }
+  const header = c.req.header("authorization");
+  const token = bearerToken(header);
+  if (!token) {
+    // Say what arrived (never the value itself) so a wrong header name or missing "Bearer " is easy to spot.
+    return c.json(
+      { message: header ? "The Authorization header must start with \"Bearer \" followed by the key." : "No Authorization header arrived. Check the header name is Authorization." },
+      401,
+    );
+  }
+  const matchesKey = stored ? await safeEqual(await sha256Hex(token), stored.value) : false;
+  const matchesSecret = c.env.STEPS_TOKEN ? await safeEqual(token, c.env.STEPS_TOKEN.trim()) : false;
+  if (!matchesKey && !matchesSecret) {
+    return c.json({ message: `Wrong steps key (received ${token.length} characters; a dashboard key has 48). Copy it again from the dashboard.` }, 401);
   }
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const steps = parseSteps(body.steps);
@@ -353,6 +369,7 @@ app.get("/", async (c) => {
     c.env.DB.prepare("SELECT * FROM body_weight ORDER BY measured_on DESC").all<BodyWeightRow>(),
     c.env.DB.prepare("SELECT day, steps FROM steps WHERE day >= ? ORDER BY day").bind(addDays(today, -STEPS_DAYS)).all<StepsRow>(),
   ]);
+  const hasSyncKey = Boolean(await c.env.DB.prepare("SELECT 1 AS ok FROM settings WHERE key = 'steps_key_sha256'").first());
 
   const sets = window.results;
   const cardio = cardioWindow.results;
@@ -401,6 +418,7 @@ app.get("/", async (c) => {
         daily: dailySteps(stepRows.results, STEPS_DAYS, today),
         summary: stepsSummary(stepRows.results, today),
         goal: stepsGoal(c.env),
+        hasSyncKey,
       },
       bodyWeight: {
         weekly: weeklyBodyWeight(bodyWeight.results, BODY_WEIGHT_WEEKS, today),
@@ -424,6 +442,18 @@ app.post("/sets/:id/delete", async (c) => {
   const id = Number(c.req.param("id"));
   if (Number.isInteger(id)) await c.env.DB.prepare("DELETE FROM sets WHERE id = ?").bind(id).run();
   return c.redirect("/");
+});
+
+// Makes a new steps sync key and shows it once, ready to copy into the Shortcut. Making another replaces the old one.
+app.post("/steps-key", async (c) => {
+  const key = newSyncKey();
+  await c.env.DB.prepare(
+    "INSERT INTO settings (key, value) VALUES ('steps_key_sha256', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+  )
+    .bind(await sha256Hex(key))
+    .run();
+  c.header("cache-control", "no-store");
+  return c.html(stepsKeyPage(key, new URL("/sync/steps", c.req.url).toString()));
 });
 
 app.post("/cardio/:id/delete", async (c) => {

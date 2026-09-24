@@ -298,3 +298,15 @@ test("steps parsing and summaries", async () => {
   });
   assert.equal(stepsSummary([], "2026-09-24").average7, null);
 });
+
+test("steps sync keys", async () => {
+  const { sha256Hex, newSyncKey, bearerToken } = await import("./auth");
+  const key = newSyncKey();
+  assert.match(key, /^[0-9a-f]{48}$/);
+  assert.notEqual(key, newSyncKey());
+  assert.equal(await sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  assert.equal(bearerToken("Bearer abc123"), "abc123");
+  assert.equal(bearerToken("  bearer   abc123  "), "abc123");
+  assert.equal(bearerToken("abc123"), null);
+  assert.equal(bearerToken(undefined), null);
+});

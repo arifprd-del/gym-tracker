@@ -41,11 +41,13 @@ In the **Shortcuts** app, go to **Automation → + → Arrive**. Choose your gym
 Your iPhone sends each day's step total from the Health app to the dashboard's **Steps** card. A website can't read
 Health data itself, so a Shortcuts automation does it every night.
 
-### 1. Add the token (once)
+### 1. Create a sync key (once)
 
-In GitHub, open the repo's **Settings → Secrets and variables → Actions → New repository secret**. Name it
-`STEPS_TOKEN` and paste a long random value, such as 30+ letters and numbers from a password generator. Then run
-**Actions → Test and deploy → Run workflow**. Keep the value handy for step 2, but don't share it anywhere else.
+On the dashboard, open the **Steps** card and tap **Create sync key**. The next page shows the exact
+**Authorization header value** (`Bearer` and the key) with a **Copy** button. It's shown only once; tapping
+**New sync key** later replaces it.
+
+(A `STEPS_TOKEN` GitHub secret also still works, if you prefer to manage the key that way.)
 
 ### 2. Build the automation
 
@@ -60,7 +62,7 @@ Add these actions:
 |---|---|---|
 | 1 | **Find Health Samples** | Type **Steps**. Add the filter **Start Date is Today**. Set **Group By** to **Day**. |
 | 2 | **Calculate Statistics** | **Sum** of *Health Samples* |
-| 3 | **Get Contents of URL** | URL `https://gym-tracker.opinion-2nd.workers.dev/sync/steps`. Tap **Show More**: Method **POST**. Headers: `Authorization` = `Bearer ` followed by your token. Request Body **JSON**: add a **Number** field `steps` set to *Statistics Result*. |
+| 3 | **Get Contents of URL** | URL `https://gym-tracker.opinion-2nd.workers.dev/sync/steps`. Tap **Show More**: Method **POST**. Headers: `Authorization` = paste the value copied from the sync key page. Request Body **JSON**: add a **Number** field `steps` set to *Statistics Result*. |
 
 Tap **Done**. To test it, open the automation and tap **▶︎**. Within a few seconds, the Steps card on the dashboard
 shows today's count.

@@ -46,3 +46,21 @@ export function sessionNeedsRefresh(cookie: string, now = Date.now()): boolean {
 export function safeNextPath(next: unknown): string {
   return typeof next === "string" && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/";
 }
+
+/** Hex SHA-256, used to store the steps sync key without keeping the key itself. */
+export async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** A new random key made of letters and digits only, so it survives copy and paste. */
+export function newSyncKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The token part of an Authorization header ("Bearer <token>"), ignoring case and stray spaces, or null. */
+export function bearerToken(header: string | undefined): string | null {
+  const match = /^\s*bearer\s+(.+?)\s*$/i.exec(header ?? "");
+  return match ? match[1] : null;
+}

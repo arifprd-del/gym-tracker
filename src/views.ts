@@ -166,6 +166,7 @@ export type DashboardData = {
     daily: { day: string; steps: number | null }[];
     summary: { today: number | null; yesterday: number | null; average7: number | null; thisWeek: number; lastSynced: string | null };
     goal: number;
+    hasSyncKey: boolean;
   };
   bodyWeight: {
     weekly: { week: string; kg: number | null }[];
@@ -375,12 +376,21 @@ function stepsChart({ daily, goal }: DashboardData["steps"]): Html {
   </svg>`;
 }
 
+function syncKeyForm(hasSyncKey: boolean): Html {
+  const confirm = hasSyncKey ? `return confirm('Make a new sync key? The old one stops working, so paste the new one into the shortcut.')` : "";
+  return html`<form method="post" action="/steps-key" onsubmit="${confirm}" style="margin-top: 10px">
+    <button type="submit"${hasSyncKey ? "" : html` class="primary"`}>${hasSyncKey ? "New sync key" : "Create sync key"}</button>
+  </form>`;
+}
+
 function stepsCard(steps: DashboardData["steps"]): Html {
   const s = steps.summary;
   if (!s.lastSynced) {
     return html`<section class="card" id="steps">
       <h2>Steps</h2>
-      <p class="muted">Not synced yet. Set up the nightly iPhone automation in <b>docs/iphone-setup.md</b> and your daily steps will appear here.</p>
+      <p class="muted" style="margin: 0">Not synced yet. Create a sync key, copy it into the shortcut's Authorization header, and your
+        daily steps will appear here. The nightly automation is described in <b>docs/iphone-setup.md</b>.</p>
+      ${syncKeyForm(steps.hasSyncKey)}
     </section>`;
   }
   const stat = (value: number | null, label: string) => html`<div><b>${value === null ? "–" : n(value)}</b><span>${label}</span></div>`;
@@ -393,6 +403,7 @@ function stepsCard(steps: DashboardData["steps"]): Html {
     </div>
     ${stepsChart(steps)}
     <p class="muted" style="font-size: 13px; margin: 6px 0 0">Dashed line: ${n(steps.goal)}-step daily goal · last synced ${shortDate(s.lastSynced)}</p>
+    ${syncKeyForm(steps.hasSyncKey)}
   </section>`;
 }
 
@@ -605,5 +616,47 @@ export function dashboardPage(data: DashboardData): Html {
         ${data.recent.length === 0 ? html`<p class="muted">No sets yet.</p>` : html`<table>${recentRows}</table>`}
       </section>
     </main>`,
+  );
+}
+
+/** Shown once after making a steps sync key: the exact header value and URL, each with a Copy button. */
+export function stepsKeyPage(key: string, url: string): Html {
+  const copyField = (id: string, label: string, value: string) => html`<label for="${id}"><b>${label}</b></label>
+    <div class="row" style="flex-wrap: nowrap">
+      <input id="${id}" value="${value}" readonly style="flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 14px" />
+      <button type="button" class="primary" data-copy="${id}">Copy</button>
+    </div>`;
+  return layout(
+    "Steps Sync Key",
+    html`<main style="max-width: 560px">
+      <header><h1>Steps sync key</h1><a class="button" href="/#steps">Dashboard</a></header>
+      <section class="card" style="display: grid; gap: 12px">
+        <p style="margin: 0">This key is shown <b>only once</b>. Copy it into the shortcut now.</p>
+        ${copyField("header-value", "Authorization header value", `Bearer ${key}`)}
+        <ol style="margin: 0; padding-left: 20px; display: grid; gap: 6px">
+          <li>Tap <b>Copy</b> above.</li>
+          <li>In the shortcut's <b>Get Contents of URL</b>, tap the <b>Authorization</b> value, select all, delete it, then <b>Paste</b>.
+            It should read <code>Bearer</code> then the key. Don't type anything else.</li>
+          <li>Tap <b>▶︎</b>. You should get "Saved … steps".</li>
+        </ol>
+        ${copyField("url-value", "URL (only if you need it)", url)}
+        <p class="muted" style="margin: 0; font-size: 13px">Making a new key later replaces this one.</p>
+      </section>
+    </main>
+    <script>
+      document.querySelectorAll("[data-copy]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const input = document.getElementById(button.dataset.copy);
+          try {
+            await navigator.clipboard.writeText(input.value);
+          } catch {
+            input.select();
+            document.execCommand("copy");
+          }
+          button.textContent = "Copied ✓";
+          setTimeout(() => (button.textContent = "Copy"), 2000);
+        });
+      });
+    </script>`,
   );
 }
