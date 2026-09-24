@@ -341,3 +341,38 @@ test("CSV export combines sets, cardio and weigh-ins", async () => {
     ].join("\n"),
   );
 });
+
+test("per-exercise sessions and progress", async () => {
+  const { exerciseSessions, progressChange } = await import("./lib");
+  const sessions = exerciseSessions(
+    [
+      set("2026-08-03T17:00:00.000Z", "bench press", 70, 5),
+      set("2026-08-03T17:05:00.000Z", "bench press", 70, 6),
+      set("2026-09-07T17:00:00.000Z", "bench press", 75, 5),
+      set("2026-09-21T17:10:00.000Z", "bench press", 80, 4),
+      set("2026-09-21T17:00:00.000Z", "bench press", 80, 5), // out of order on purpose
+    ],
+    "UTC",
+  );
+  assert.deepEqual(
+    sessions.map((s) => [s.day, s.sets.length, s.topWeight, s.bestReps, s.record]),
+    [
+      ["2026-08-03", 2, 70, 6, false],
+      ["2026-09-07", 1, 75, 5, true],
+      ["2026-09-21", 2, 80, 5, true],
+    ],
+  );
+  assert.deepEqual(sessions[2].sets, [{ weight: 80, reps: 5 }, { weight: 80, reps: 4 }]); // in time order
+  assert.equal(sessions[0].bestE1rm, 84); // 70 × (1 + 6/30)
+  assert.equal(sessions[0].volumeKg, 770);
+  // 8 weeks before 21 Sept is 27 July, so it compares with the first session.
+  assert.deepEqual(progressChange(sessions), { change: Math.round((80 * (1 + 5 / 30) - 84) * 10) / 10, since: "2026-08-03" });
+  assert.equal(progressChange(sessions.slice(0, 1)), null);
+
+  const pullUps = exerciseSessions(
+    [set("2026-09-01T17:00:00.000Z", "pull up", 0, 6), set("2026-09-20T17:00:00.000Z", "pull up", 0, 9)],
+    "UTC",
+  );
+  assert.equal(pullUps[1].record, false); // bodyweight: no weight records
+  assert.deepEqual(progressChange(pullUps), { change: 3, since: "2026-09-01" }); // reps
+});

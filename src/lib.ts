@@ -437,3 +437,58 @@ export function exportCsv(input: { sets: SetRow[]; cardio: CardioRow[]; bodyWeig
   rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return [CSV_HEADER.join(","), ...rows.map((r) => r.cells.map(csvCell).join(","))].join("\n") + "\n";
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Per-exercise progress
+
+export type ExerciseSession = {
+  day: string;
+  sets: { weight: number; reps: number }[];
+  topWeight: number;
+  bestReps: number; // most reps in a set at the day's top weight
+  bestE1rm: number;
+  volumeKg: number;
+  record: boolean; // heavier than any earlier session
+};
+
+/** One entry per local day for a single exercise's sets, oldest first, marking the days that set a weight record. */
+export function exerciseSessions(sets: SetRow[], timeZone: string): ExerciseSession[] {
+  const byDay = new Map<string, SetRow[]>();
+  for (const s of [...sets].sort((a, b) => a.performed_at.localeCompare(b.performed_at))) {
+    const day = localDay(s.performed_at, timeZone);
+    byDay.set(day, [...(byDay.get(day) ?? []), s]);
+  }
+  let bestSoFar = -1;
+  return [...byDay]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([day, daySets]) => {
+      const topWeight = Math.max(...daySets.map((s) => s.weight_kg));
+      const session: ExerciseSession = {
+        day,
+        sets: daySets.map((s) => ({ weight: s.weight_kg, reps: s.reps })),
+        topWeight,
+        bestReps: Math.max(...daySets.filter((s) => s.weight_kg === topWeight).map((s) => s.reps)),
+        bestE1rm: Math.max(...daySets.map((s) => estimateOneRepMax(s.weight_kg, s.reps))),
+        volumeKg: volume(daySets),
+        // The first session is a baseline, not a record; bodyweight moves count reps instead of weight.
+        record: bestSoFar >= 0 && (topWeight > 0 ? topWeight > bestSoFar : false),
+      };
+      bestSoFar = Math.max(bestSoFar, topWeight);
+      return session;
+    });
+}
+
+/**
+ * Change in the headline measure (best e1RM, or best reps for bodyweight moves) between the latest session and the
+ * last session at least `days` days before it. Null when there is no such earlier session.
+ */
+export function progressChange(sessions: ExerciseSession[], days = 56): { change: number; since: string } | null {
+  if (sessions.length < 2) return null;
+  const latest = sessions[sessions.length - 1];
+  const cutoff = addDays(latest.day, -days);
+  const earlier = [...sessions].reverse().find((s) => s.day <= cutoff) ?? sessions[0];
+  if (earlier === latest) return null;
+  const bodyweight = latest.topWeight === 0 && earlier.topWeight === 0;
+  const value = (s: ExerciseSession) => (bodyweight ? s.bestReps : s.bestE1rm);
+  return { change: Math.round((value(latest) - value(earlier)) * 10) / 10, since: earlier.day };
+}

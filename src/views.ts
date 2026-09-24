@@ -13,6 +13,7 @@ import {
   type ChecklistItem,
   type CardioRow,
   type DayOf,
+  type ExerciseSession,
   type DaySummary,
   type SetRow,
   type SplitDay,
@@ -103,6 +104,10 @@ svg text { fill: var(--muted); font-size: 11px; }
 .step-stats b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
 .step-stats span { color: var(--muted); font-size: 13px; }
 .goal-line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
+a.plain { color: inherit; text-decoration: none; }
+a.plain:hover, a.plain:focus-visible { text-decoration: underline; }
+.stats.compact .stat b { font-size: clamp(18px, 5.2vw, 26px); white-space: nowrap; }
+.history td.sets { white-space: normal; color: var(--muted); }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .login { max-width: 360px; margin: 12vh auto 0; }
 .login form { display: grid; gap: 12px; }
@@ -529,7 +534,7 @@ export function dashboardPage(data: DashboardData): Html {
     return html`${dayHeader}
       <tr>
         <td class="muted">${s.time}</td>
-        <td>${dayDot(data.dayOf(s.exercise))}${displayName(s.exercise)}</td>
+        <td>${dayDot(data.dayOf(s.exercise))}<a class="plain" href="${exerciseHref(s.exercise)}">${displayName(s.exercise)}</a></td>
         <td class="num">${formatLoad(s)}</td>
         <td class="muted">${s.rpe ? `RPE ${s.rpe}` : ""}${s.note ? ` · ${s.note}` : ""}</td>
         <td class="num">
@@ -570,7 +575,7 @@ export function dashboardPage(data: DashboardData): Html {
             <table>
               <tr><th>Exercise</th><th class="num">Sets</th><th class="num">Top weight</th></tr>
               ${t.exercises.map(
-                (e) => html`<tr><td>${dayDot(data.dayOf(e.exercise))}${displayName(e.exercise)}</td><td class="num">${e.sets}</td><td class="num">${e.topKg > 0 ? `${formatKg(e.topKg)} kg` : "Bodyweight"}</td></tr>`,
+                (e) => html`<tr><td>${dayDot(data.dayOf(e.exercise))}<a class="plain" href="${exerciseHref(e.exercise)}">${displayName(e.exercise)}</a></td><td class="num">${e.sets}</td><td class="num">${e.topKg > 0 ? `${formatKg(e.topKg)} kg` : "Bodyweight"}</td></tr>`,
               )}
             </table>
           </section>`
@@ -605,7 +610,7 @@ export function dashboardPage(data: DashboardData): Html {
               <tr><th>Exercise</th><th class="num">Best</th><th class="num">Est. 1RM</th><th class="num">Sets</th><th class="num">Last done</th></tr>
               ${data.records.map(
                 (r) => html`<tr>
-                  <td>${dayDot(data.dayOf(r.exercise))}${displayName(r.exercise)}</td>
+                  <td>${dayDot(data.dayOf(r.exercise))}<a class="plain" href="${exerciseHref(r.exercise)}">${displayName(r.exercise)}</a></td>
                   <td class="num">${r.best_kg > 0 ? `${formatKg(r.best_kg)} kg` : "Bodyweight"}</td>
                   <td class="num">${r.best_kg > 0 ? `${formatKg(r.best_e1rm)} kg` : "–"}</td>
                   <td class="num">${r.sets}</td>
@@ -662,5 +667,116 @@ export function stepsKeyPage(key: string, url: string): Html {
         });
       });
     </script>`,
+  );
+}
+
+export function exerciseHref(name: string): string {
+  return `/exercise/${encodeURIComponent(name)}`;
+}
+
+export type ExercisePageData = {
+  name: string;
+  day: WorkoutDay;
+  sessions: ExerciseSession[];
+  change: { change: number; since: string } | null;
+  today: string;
+};
+
+/** Line chart of one value per session, placed by date so gaps between sessions show as gaps in time. */
+function progressChart(sessions: ExerciseSession[], bodyweight: boolean, colour: string): Html {
+  if (sessions.length === 0) return html``;
+  const width = 400;
+  const height = 170;
+  const left = 38;
+  const right = 18;
+  const top = 12;
+  const chartHeight = 126;
+  const value = (s: ExerciseSession) => (bodyweight ? s.bestReps : s.bestE1rm);
+  const values = sessions.map(value);
+  const span = Math.max(...values) - Math.min(...values);
+  const pad = Math.max(bodyweight ? 1 : 2.5, span * 0.15);
+  const lo = Math.max(0, Math.floor(Math.min(...values) - pad));
+  const hi = Math.ceil(Math.max(...values) + pad);
+  const t = (day: string) => Date.parse(`${day}T00:00:00Z`);
+  const t0 = t(sessions[0].day);
+  const t1 = Math.max(t(sessions[sessions.length - 1].day), t0 + 86_400_000);
+  const px = (day: string) => left + ((t(day) - t0) / (t1 - t0)) * (width - left - right);
+  const py = (v: number) => top + ((hi - v) / (hi - lo)) * chartHeight;
+  const path = sessions.map((s, i) => `${i ? "L" : "M"}${px(s.day).toFixed(1)},${py(value(s)).toFixed(1)}`).join("");
+  const ticks = sessions.length === 1 ? [sessions[0].day] : [0, 1, 2, 3].map((i) => new Date(t0 + ((t1 - t0) * i) / 3).toISOString().slice(0, 10));
+  const unit = bodyweight ? "reps" : "kg";
+  return html`<svg class="volume" viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="${bodyweight ? "Best reps" : "Estimated one-rep max"} per session">
+    <line x1="${left}" x2="${width - right}" y1="${top}" y2="${top}" stroke="var(--line)"></line>
+    <line x1="${left}" x2="${width - right}" y1="${top + chartHeight}" y2="${top + chartHeight}" stroke="var(--line)"></line>
+    <text x="0" y="${top + 4}">${hi}</text>
+    <text x="0" y="${top + chartHeight + 4}">${lo}</text>
+    ${sessions.length > 1 ? html`<path class="line" d="${path}" style="stroke: ${colour}"></path>` : ""}
+    ${sessions.map(
+      (s) => html`<circle cx="${px(s.day).toFixed(1)}" cy="${py(value(s)).toFixed(1)}" r="${s.record ? 5.5 : 4}" fill="${colour}" stroke="var(--card)" stroke-width="2">
+        <title>${shortDate(s.day)}: ${bodyweight ? `${s.bestReps} reps` : `est. 1RM ${formatKg(s.bestE1rm)} kg`} · best set ${formatLoad({ weight_kg: s.topWeight, reps: s.bestReps })}${s.record ? " · 🏆 record" : ""}</title>
+      </circle>`,
+    )}
+    ${ticks.map((d, i) => html`<text x="${px(d).toFixed(1)}" y="${height - 6}" text-anchor="${i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle"}">${shortDate(d)}</text>`)}
+  </svg>
+  <p class="muted" style="font-size: 13px; margin: 6px 0 0">${bodyweight ? "Most reps in a set, each session." : "Best estimated one-rep max (Epley) each session, in " + unit + "."} Bigger dots are weight records.</p>`;
+}
+
+export function exercisePage(d: ExercisePageData): Html {
+  const title = displayName(d.name);
+  const colour = d.day === "other" ? "var(--accent)" : `var(--${d.day})`;
+  const sessions = d.sessions;
+  const bodyweight = sessions.length > 0 && sessions.every((s) => s.topWeight === 0);
+  const best = sessions.reduce<ExerciseSession | null>((b, s) => (!b || s.topWeight > b.topWeight || (s.topWeight === b.topWeight && s.bestReps > b.bestReps) ? s : b), null);
+  const bestE1rm = sessions.reduce<ExerciseSession | null>((b, s) => (!b || s.bestE1rm > b.bestE1rm ? s : b), null);
+  const totalSets = sessions.reduce((n, s) => n + s.sets.length, 0);
+  const last = sessions[sessions.length - 1];
+  const change = d.change
+    ? `${d.change.change > 0 ? "+" : d.change.change < 0 ? "−" : "±"}${bodyweight ? Math.abs(d.change.change) : formatKg(Math.abs(d.change.change))} ${bodyweight ? "reps" : "kg"}`
+    : "–";
+  const stat = (value: string, label: string) => html`<div class="stat"><b>${value}</b><span>${label}</span></div>`;
+  return layout(
+    `${title} · Arif Gym Tracker`,
+    html`<main>
+      <header>
+        <h1 style="display: flex; align-items: center; gap: 10px; white-space: normal">
+          <span class="swatch" style="background: ${colour}; width: 14px; height: 14px"></span>${title}
+        </h1>
+        <div class="row">
+          <a class="button primary" href="/log?tab=${d.day === "other" ? "push" : d.day}">Log</a>
+          <a class="button" href="/">Dashboard</a>
+        </div>
+      </header>
+
+      ${sessions.length === 0
+        ? html`<section class="card"><p class="muted" style="margin: 0">No sets logged for ${title} yet.</p></section>`
+        : html`<section class="stats compact" aria-label="Summary">
+              ${bodyweight
+                ? stat(`${best!.bestReps} reps`, `best set · ${shortDate(best!.day)}`)
+                : stat(`${formatKg(best!.topWeight)} kg × ${best!.bestReps}`, `best set · ${shortDate(best!.day)}`)}
+              ${bodyweight ? "" : stat(`${formatKg(bestE1rm!.bestE1rm)} kg`, `best est. 1RM · ${shortDate(bestE1rm!.day)}`)}
+              ${stat(change, d.change ? `since ${shortDate(d.change.since)}` : "change (needs 2 sessions)")}
+              ${stat(String(sessions.length), `sessions · ${totalSets} sets`)}
+              ${stat(daysAgo(last.day, d.today).replace(/^(\d+) days ago$/, "$1d ago"), `last done · ${shortDate(last.day)}`)}
+            </section>
+
+            <section class="card">
+              <h2>${bodyweight ? "Best reps" : "Strength (est. 1RM)"}</h2>
+              ${progressChart(sessions, bodyweight, colour)}
+            </section>
+
+            <section class="card">
+              <h2>History</h2>
+              <table class="history">
+                <tr><th>Date</th><th>Sets</th><th class="num">Volume</th></tr>
+                ${[...sessions].reverse().map(
+                  (s) => html`<tr>
+                    <td>${shortDate(s.day)}${s.record ? " 🏆" : ""}</td>
+                    <td class="sets">${s.sets.map((x) => (x.weight > 0 ? `${formatKg(x.weight)}×${x.reps}` : `${x.reps}`)).join(", ")}</td>
+                    <td class="num">${s.volumeKg > 0 ? `${Math.round(s.volumeKg).toLocaleString("en-GB")} kg` : `${s.sets.reduce((n, x) => n + x.reps, 0)} reps`}</td>
+                  </tr>`,
+                )}
+              </table>
+            </section>`}
+    </main>`,
   );
 }

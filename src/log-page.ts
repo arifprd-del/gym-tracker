@@ -52,6 +52,7 @@ main.log { padding-bottom: 345px; gap: 14px; }
 .panel-inner { max-width: 960px; margin: 0 auto; display: grid; gap: 10px; }
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-height: 22px; }
 .panel-head b { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-link { font-size: 14px; color: var(--accent); text-decoration: none; white-space: nowrap; margin-right: auto; }
 .rest { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hint { display: flex; align-items: center; gap: 8px; min-height: 34px; font-size: 14px; color: var(--muted); overflow-x: auto; white-space: nowrap; }
 .chip { border-radius: 999px; padding: 6px 12px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); font-weight: 650; font-size: 14px; touch-action: manipulation; }
@@ -91,7 +92,7 @@ const $ = (id) => document.getElementById(id);
 const els = { tabs: $("tabs"), grid: $("grid"), today: $("today"), todayCard: $("today-card"), selected: $("selected"),
   rest: $("rest"), weight: $("weight"), reps: $("reps"), log: $("log"), toast: $("toast"), toastText: $("toast-text"),
   undo: $("undo"), edit: $("edit"), liftSteppers: $("lift-steppers"), cardioSteppers: $("cardio-steppers"),
-  minutes: $("minutes"), distance: $("distance"), hint: $("hint"), planHint: $("plan-hint") };
+  minutes: $("minutes"), distance: $("distance"), hint: $("hint"), planHint: $("plan-hint"), progress: $("progress-link") };
 const state = { tab: "push", selected: null, cardioSelected: null, extraActivities: [], editing: false, restFrom: null, lastLogged: null };
 
 const title = (n) => n.replace(/(^|\\s)(\\S)/g, (m, s, c) => s + c.toUpperCase());
@@ -278,6 +279,8 @@ function renderPanel() {
   els.liftSteppers.hidden = cardio;
   els.cardioSteppers.hidden = !cardio;
   els.selected.textContent = selected ? title(selected) : cardio ? "Pick an activity" : "Tap an exercise";
+  els.progress.hidden = cardio || !selected;
+  if (!cardio && selected) els.progress.href = "/exercise/" + encodeURIComponent(selected);
   els.log.textContent = cardio ? "Log cardio" : "Log set";
   els.log.disabled = !selected;
 }
@@ -482,7 +485,7 @@ export function logPage(data: LogPageData) {
 
       <div class="panel">
         <div class="panel-inner">
-          <div class="panel-head"><b id="selected">Tap an exercise</b><span class="rest" id="rest"></span></div>
+          <div class="panel-head"><b id="selected">Tap an exercise</b><a class="progress-link" id="progress-link" hidden>📈 Progress</a><span class="rest" id="rest"></span></div>
           <div class="hint" id="hint" aria-live="polite"></div>
           <div class="steppers" id="lift-steppers">
             <div class="stepper">

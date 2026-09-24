@@ -26,6 +26,8 @@ import {
   parseSteps,
   dailySteps,
   exportCsv,
+  exerciseSessions,
+  progressChange,
   stepsSummary,
   lastSessionBest,
   todaysPlan,
@@ -50,7 +52,7 @@ import {
   type StepsRow,
 } from "./lib";
 import { logPage, type ExerciseButton } from "./log-page";
-import { dashboardPage, loginPage, stepsKeyPage, type ExerciseRecord } from "./views";
+import { dashboardPage, exercisePage, loginPage, stepsKeyPage, type ExerciseRecord } from "./views";
 
 type Env = {
   DB: D1Database;
@@ -436,6 +438,26 @@ app.get("/", async (c) => {
         time: new Date(s.performed_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }),
       })),
     }),
+  );
+});
+
+// Progress for one exercise: best sets, strength over time and every session.
+app.get("/exercise/:name", async (c) => {
+  const name = normalizeExercise(c.req.param("name"));
+  const [sets, button] = await Promise.all([
+    c.env.DB.prepare("SELECT * FROM sets WHERE exercise = ? ORDER BY performed_at").bind(name).all<SetRow>(),
+    c.env.DB.prepare("SELECT name, day FROM exercises WHERE name = ?").bind(name).first<ExerciseButton>(),
+  ]);
+  const sessions = exerciseSessions(sets.results, c.env.TIMEZONE);
+  return c.html(
+    exercisePage({
+      name,
+      day: button?.day ?? "other",
+      sessions,
+      change: progressChange(sessions),
+      today: localDay(new Date(), c.env.TIMEZONE),
+    }),
+    sets.results.length || button ? 200 : 404,
   );
 });
 
