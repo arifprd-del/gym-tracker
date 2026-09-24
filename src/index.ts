@@ -254,8 +254,9 @@ app.post("/logout", (c) => {
 // which can only save step totals: { "steps": 8423 } for today, or add "date": "YYYY-MM-DD" for another day.
 app.post("/sync/steps", async (c) => {
   if (!c.env.STEPS_TOKEN) return c.json({ message: "Steps sync isn't set up: add the STEPS_TOKEN secret." }, 503);
-  const header = c.req.header("authorization") ?? "";
-  if (!header.startsWith("Bearer ") || !(await safeEqual(header.slice(7).trim(), c.env.STEPS_TOKEN))) {
+  // Ignore stray spaces or line breaks from copy and paste on either side, and the case of "Bearer".
+  const match = /^\s*bearer\s+(.+?)\s*$/i.exec(c.req.header("authorization") ?? "");
+  if (!match || !(await safeEqual(match[1], c.env.STEPS_TOKEN.trim()))) {
     return c.json({ message: "Wrong steps token." }, 401);
   }
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
