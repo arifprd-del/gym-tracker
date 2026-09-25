@@ -289,13 +289,21 @@ app.post("/sync/steps", async (c) => {
   if (!isIsoDate(day) || day > today || day < addDays(today, -7)) {
     return c.json({ message: "The date must be YYYY-MM-DD, within the last 7 days." }, 400);
   }
-  await c.env.DB.prepare(
+  const row = await c.env.DB.prepare(
     `INSERT INTO steps (day, steps) VALUES (?, ?)
-     ON CONFLICT (day) DO UPDATE SET steps = excluded.steps, synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+     ON CONFLICT (day) DO UPDATE SET steps = MAX(steps, excluded.steps), synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     RETURNING steps`,
   )
     .bind(day, steps)
-    .run();
-  return c.json({ message: `Saved ${steps.toLocaleString("en-GB")} steps for ${day}.`, day, steps });
+    .first<{ steps: number }>();
+  // A day's total only goes up, so keep the higher count. A run while the iPhone is locked can't read Health data and
+  // sends 0, which must not wipe out an earlier, real total.
+  const saved = row?.steps ?? steps;
+  const message =
+    saved > steps
+      ? `Kept ${saved.toLocaleString("en-GB")} steps for ${day} (this sync sent ${steps.toLocaleString("en-GB")}, lower than already saved).`
+      : `Saved ${saved.toLocaleString("en-GB")} steps for ${day}.`;
+  return c.json({ message, day, steps: saved });
 });
 
 // Everything below needs a signed-in session.

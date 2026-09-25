@@ -71,8 +71,9 @@ shows today's count.
 
 - **Numbers higher than the Health app?** If you wear an Apple Watch, iPhone and Watch steps can be counted twice.
   **Group By Day** normally prevents this. If it still happens, add the filter **Source is** *your iPhone*.
-- **A missed night:** Health data is locked while the phone is locked with a passcode, so a run can occasionally fail.
-  Syncing again replaces that day's total, so the next run fixes today. For a missed earlier day, run the shortcut by
+- **A missed night:** Health data is locked while the phone is locked with a passcode, so a run can find no steps and
+  send 0. The tracker keeps the **higher** total for each day, so a 0 or a partial count never overwrites a real one,
+  and it's safe to run the shortcut several times a day (e.g. 21:00 and 23:45 automations, or by hand). For a missed earlier day, run the shortcut by
   hand with the Health filter set to that date and add a **Text** field `date` (`YYYY-MM-DD`) to the JSON. Up to 7 days
   back is accepted.
 - **Goal line:** the dashed line is 8,000 steps a day. Change `STEPS_DAILY_GOAL` in `wrangler.jsonc` to move it.
