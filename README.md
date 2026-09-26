@@ -41,6 +41,9 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
 - **Stall alert:** when an exercise's last 3 sessions (within the last 6 weeks) haven't beaten its best estimated 1RM
   (best reps for bodyweight moves), the log screen offers one-tap **Deload** (about 10% lighter) and **Switch** (other
   rep range at a matching weight) targets, the progress page explains both, and Personal records tags it "Stalled".
+- **Week recap (`/recap`):** a dashboard card for the week just finished (on Sundays, the week ending today) and a
+  full page with ← → to browse weeks: sessions, split days done, volume vs the week before, cardio vs goal, steps,
+  body weight change, the week's personal bests, stalled exercises and what's next in the rotation.
 - **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and

@@ -30,6 +30,9 @@ import {
   progressChange,
   detectStall,
   stallsByExercise,
+  recapWeekFor,
+  weekRecap,
+  type WeekRecap,
   stepsSummary,
   lastSessionBest,
   todaysPlan,
@@ -54,7 +57,7 @@ import {
   type StepsRow,
 } from "./lib";
 import { logPage, type ExerciseButton } from "./log-page";
-import { dashboardPage, exercisePage, loginPage, stepsKeyPage, type ExerciseRecord } from "./views";
+import { dashboardPage, exercisePage, loginPage, recapPage, stepsKeyPage, type ExerciseRecord } from "./views";
 
 type Env = {
   DB: D1Database;
@@ -100,6 +103,32 @@ async function cardioToday(db: D1Database, timeZone: string): Promise<CardioRow[
   const today = localDay(new Date(), timeZone);
   const { results } = await db.prepare("SELECT * FROM cardio WHERE performed_at >= ? ORDER BY performed_at").bind(since).all<CardioRow>();
   return results.filter((r) => localDay(r.performed_at, timeZone) === today);
+}
+
+/** Everything a weekly recap needs, for the Monday-to-Sunday week starting `week`. */
+async function loadRecap(env: Env, week: string): Promise<WeekRecap> {
+  const utc = (day: string) => new Date(`${day}T00:00:00Z`).toISOString();
+  // A day of margin either side covers time zones; records compare against the year before.
+  const from = utc(addDays(week, -366));
+  const to = utc(addDays(week, 8));
+  const [sets, cardio, bodyWeight, steps, exercises] = await Promise.all([
+    env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ? AND performed_at < ?").bind(from, to).all<SetRow>(),
+    env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ? AND performed_at < ?").bind(utc(addDays(week, -1)), to).all<CardioRow>(),
+    env.DB.prepare("SELECT * FROM body_weight WHERE measured_on <= ?").bind(addDays(week, 6)).all<BodyWeightRow>(),
+    env.DB.prepare("SELECT day, steps FROM steps WHERE day >= ? AND day <= ?").bind(week, addDays(week, 6)).all<StepsRow>(),
+    env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
+  ]);
+  return weekRecap({
+    week,
+    sets: sets.results,
+    cardio: cardio.results,
+    bodyWeight: bodyWeight.results,
+    steps: steps.results,
+    dayOf: dayLookup(exercises.results),
+    timeZone: env.TIMEZONE,
+    cardioGoal: cardioGoal(env),
+    stepsGoal: stepsGoal(env),
+  });
 }
 
 async function setSessionCookie(c: Context<{ Bindings: Env }>) {
@@ -397,9 +426,11 @@ app.get("/", async (c) => {
   const cardioThisWeek = [...cardioDays].filter(([d]) => d >= thisWeek).reduce((sum, [, m]) => sum + m, 0);
   const weighedInThisWeek = bodyWeight.results.some((r) => r.measured_on >= thisWeek && r.measured_on <= today);
   const lastOfNext = lastTrained(days)[plan.next];
+  const recap = await loadRecap(c.env, recapWeekFor(today));
 
   return c.html(
     dashboardPage({
+      recap,
       habits: {
         plan: plan.next,
         doneToday: plan.doneToday,
@@ -472,6 +503,14 @@ app.get("/exercise/:name", async (c) => {
     }),
     sets.results.length || button ? 200 : 404,
   );
+});
+
+// Weekly recap: ?week=YYYY-MM-DD (any day in the week); defaults to the same week as the dashboard card.
+app.get("/recap", async (c) => {
+  const today = localDay(new Date(), c.env.TIMEZONE);
+  const asked = c.req.query("week");
+  const week = isIsoDate(asked) && asked <= today ? weekStart(asked) : recapWeekFor(today);
+  return c.html(recapPage(await loadRecap(c.env, week), today));
 });
 
 app.post("/sets/:id/delete", async (c) => {

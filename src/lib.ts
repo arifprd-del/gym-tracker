@@ -565,3 +565,106 @@ export function stallsByExercise(sets: SetRow[], timeZone: string, today: string
   }
   return stalls;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Weekly recap (Monday to Sunday)
+
+export type WeekRecap = {
+  week: string; // Monday, YYYY-MM-DD
+  sessions: number; // days with any lifting or cardio
+  splitDone: Record<SplitDay, boolean>;
+  sets: number;
+  volumeKg: number;
+  volumeChangePct: number | null; // vs the week before; null if that week had no volume
+  records: { exercise: string; weight: number; reps: number; day: string }[];
+  cardioMinutes: number;
+  cardioGoal: number;
+  steps: { total: number; average: number | null; syncedDays: number; daysAtGoal: number; goal: number };
+  bodyWeight: { kg: number; changeKg: number | null } | null;
+  stalled: string[];
+  next: SplitDay;
+  complete: boolean; // push, pull, legs, the cardio goal and a weigh-in all done
+};
+
+export function weekRecap(input: {
+  week: string;
+  sets: SetRow[]; // this week plus earlier history (for records and the previous week's volume)
+  cardio: CardioRow[];
+  bodyWeight: BodyWeightRow[];
+  steps: StepsRow[];
+  dayOf: DayOf;
+  timeZone: string;
+  cardioGoal: number;
+  stepsGoal: number;
+}): WeekRecap {
+  const { week, timeZone } = input;
+  const end = addDays(week, 6);
+  const prevWeek = addDays(week, -7);
+  const inWeek = (day: string) => day >= week && day <= end;
+  const dayOfSet = (s: SetRow) => localDay(s.performed_at, timeZone);
+
+  const weekSets = input.sets.filter((s) => inWeek(dayOfSet(s)));
+  const prevVolume = volume(input.sets.filter((s) => { const d = dayOfSet(s); return d >= prevWeek && d < week; }));
+  const volumeKg = volume(weekSets);
+  const days = trainingDaysByType(weekSets, input.dayOf, timeZone);
+  const splitDone = { push: false, pull: false, legs: false };
+  for (const entry of days.values()) if (entry.main !== "other") splitDone[entry.main] = true;
+
+  const cardioDays = cardioMinutesPerDay(input.cardio.filter((c) => inWeek(localDay(c.performed_at, timeZone))), timeZone);
+  const cardioMinutes = [...cardioDays.values()].reduce((a, b) => a + b, 0);
+
+  // Weight records set this week: sessions this week that beat every earlier session of that exercise.
+  const byExercise = new Map<string, SetRow[]>();
+  for (const s of input.sets) if (dayOfSet(s) <= end) byExercise.set(s.exercise, [...(byExercise.get(s.exercise) ?? []), s]);
+  const records: WeekRecap["records"] = [];
+  const stalled: string[] = [];
+  for (const [exercise, rows] of byExercise) {
+    const sessions = exerciseSessions(rows, timeZone);
+    for (const s of sessions) if (s.record && inWeek(s.day)) records.push({ exercise, weight: s.topWeight, reps: s.bestReps, day: s.day });
+    if (sessions.some((s) => inWeek(s.day)) && detectStall(sessions, end)) stalled.push(exercise);
+  }
+  records.sort((a, b) => a.day.localeCompare(b.day) || a.exercise.localeCompare(b.exercise));
+
+  const weekSteps = input.steps.filter((r) => inWeek(r.day));
+  const stepsTotal = weekSteps.reduce((sum, r) => sum + r.steps, 0);
+
+  const weighIn = (from: string, to: string) =>
+    input.bodyWeight.filter((b) => b.measured_on >= from && b.measured_on <= to).sort((a, b) => b.measured_on.localeCompare(a.measured_on))[0];
+  const thisWeigh = weighIn(week, end);
+  const prevWeigh = weighIn("0000-00-00", addDays(week, -1));
+
+  const allDays = trainingDaysByType(input.sets.filter((s) => dayOfSet(s) <= end), input.dayOf, timeZone);
+  const next = todaysPlan(allDays, addDays(end, 1)).next;
+  const cardioDone = cardioMinutes >= input.cardioGoal;
+
+  return {
+    week,
+    sessions: new Set([...days.keys(), ...cardioDays.keys()]).size,
+    splitDone,
+    sets: weekSets.length,
+    volumeKg,
+    volumeChangePct: prevVolume > 0 ? Math.round(((volumeKg - prevVolume) / prevVolume) * 100) : null,
+    records,
+    cardioMinutes,
+    cardioGoal: input.cardioGoal,
+    steps: {
+      total: stepsTotal,
+      average: weekSteps.length ? Math.round(stepsTotal / weekSteps.length) : null,
+      syncedDays: weekSteps.length,
+      daysAtGoal: weekSteps.filter((r) => r.steps >= input.stepsGoal).length,
+      goal: input.stepsGoal,
+    },
+    bodyWeight: thisWeigh
+      ? { kg: thisWeigh.weight_kg, changeKg: prevWeigh ? Math.round((thisWeigh.weight_kg - prevWeigh.weight_kg) * 10) / 10 : null }
+      : null,
+    stalled: stalled.sort(),
+    next,
+    complete: splitDone.push && splitDone.pull && splitDone.legs && cardioDone && Boolean(thisWeigh),
+  };
+}
+
+/** Which week the dashboard's recap card shows: the current week on Sunday, otherwise last week. */
+export function recapWeekFor(today: string): string {
+  const weekday = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  return weekday === 0 ? weekStart(today) : addDays(weekStart(today), -7);
+}

@@ -1,6 +1,7 @@
 import { html, raw } from "hono/html";
 import {
   addDays,
+  weekStart,
   daysAgo,
   displayName,
   formatCardio,
@@ -15,6 +16,7 @@ import {
   type DayOf,
   type ExerciseSession,
   type Stall,
+  type WeekRecap,
   type DaySummary,
   type SetRow,
   type SplitDay,
@@ -111,6 +113,12 @@ a.plain:hover, a.plain:focus-visible { text-decoration: underline; }
 .tag { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600;
   background: var(--nudge-bg); color: var(--text); text-decoration: none; vertical-align: 1px; }
 .history td.sets { white-space: normal; color: var(--muted); }
+.recap-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.recap-headline { font-size: 20px; font-weight: 700; margin: 0 0 12px; }
+.recap-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 20px; }
+.recap-grid b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.recap-grid span { color: var(--muted); font-size: 13px; }
+.recap-list { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .login { max-width: 360px; margin: 12vh auto 0; }
 .login form { display: grid; gap: 12px; }
@@ -160,6 +168,7 @@ export function loginPage(error?: string, next = "/"): Html {
 export type ExerciseRecord = { exercise: string; best_kg: number; best_e1rm: number; sets: number; last: string };
 
 export type DashboardData = {
+  recap: WeekRecap;
   habits: {
     plan: SplitDay;
     doneToday: SplitDay | null;
@@ -564,6 +573,8 @@ export function dashboardPage(data: DashboardData): Html {
 
       ${habitCards(data.habits, data.today)}
 
+      ${recapCard(data.recap, data.today)}
+
       <section class="stats" aria-label="Summary">
         <div class="stat"><b>${t.sets}</b><span>sets today</span></div>
         <div class="stat"><b>${Math.round(t.volumeKg).toLocaleString("en-GB")}</b><span>kg volume today</span></div>
@@ -797,6 +808,97 @@ export function exercisePage(d: ExercisePageData): Html {
                 )}
               </table>
             </section>`}
+    </main>`,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Weekly recap
+
+function weekRange(week: string): string {
+  return `${shortDate(week)} – ${shortDate(addDays(week, 6))}`;
+}
+
+function recapHeadline(r: WeekRecap): string {
+  if (r.sessions === 0) return "No training logged this week.";
+  const parts = [`${r.sessions} ${r.sessions === 1 ? "session" : "sessions"}`];
+  if (r.records.length) parts.push(`${r.records.length} personal ${r.records.length === 1 ? "best" : "bests"}`);
+  if (r.complete) parts.push("week complete 🎉");
+  return parts.join(" · ");
+}
+
+function signed(n: number, unit: string): string {
+  return `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)}${unit}`;
+}
+
+function recapStats(r: WeekRecap): Html {
+  const split = SPLIT_DAYS.filter((d) => r.splitDone[d]).map((d) => DAY_LABELS[d]);
+  const item = (value: string, label: string) => html`<div><b>${value}</b><span>${label}</span></div>`;
+  return html`<div class="recap-grid">
+    ${item(split.length === 3 ? "All 3 ✓" : split.length ? split.join(", ") : "None", split.length === 3 ? "Push, Pull and Legs" : `${split.length}/3 split days`)}
+    ${item(`${Math.round(r.volumeKg).toLocaleString("en-GB")} kg`, r.volumeChangePct === null ? `volume · ${r.sets} sets` : `volume · ${signed(r.volumeChangePct, "%")} vs week before`)}
+    ${item(formatMinutes(r.cardioMinutes), `cardio · goal ${formatMinutes(r.cardioGoal)}${r.cardioMinutes >= r.cardioGoal ? " ✓" : ""}`)}
+    ${item(r.steps.average === null ? "–" : `${r.steps.average.toLocaleString("en-GB")}`, r.steps.average === null ? "steps · not synced" : `steps a day · ${r.steps.daysAtGoal}/${r.steps.syncedDays} days at goal`)}
+    ${item(r.bodyWeight ? `${formatKg(r.bodyWeight.kg)} kg` : "–", r.bodyWeight ? (r.bodyWeight.changeKg === null ? "body weight" : `body weight · ${signed(r.bodyWeight.changeKg, " kg")}`) : "no weigh-in")}
+  </div>`;
+}
+
+/** Dashboard card: the week just finished (or, on Sunday, the week ending today). */
+export function recapCard(r: WeekRecap, today: string): Html {
+  const current = weekStart(today) === r.week;
+  return html`<section class="card" id="recap">
+    <div class="recap-head">
+      <h2>${current ? "This week" : "Last week"} · ${weekRange(r.week)}</h2>
+      <a class="plain muted" href="/recap?week=${r.week}" style="font-size: 14px">Full recap →</a>
+    </div>
+    <p class="recap-headline">${recapHeadline(r)}</p>
+    ${recapStats(r)}
+  </section>`;
+}
+
+export function recapPage(r: WeekRecap, today: string): Html {
+  const prev = addDays(r.week, -7);
+  const next = addDays(r.week, 7);
+  const hasNext = next <= weekStart(today);
+  return layout(
+    `Week of ${shortDate(r.week)} · Arif Gym Tracker`,
+    html`<main>
+      <header>
+        <h1 style="white-space: normal">Week recap</h1>
+        <div class="row">
+          <a class="button" href="/recap?week=${prev}" aria-label="Previous week">←</a>
+          ${hasNext ? html`<a class="button" href="/recap?week=${next}" aria-label="Next week">→</a>` : ""}
+          <a class="button" href="/">Dashboard</a>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2>${weekRange(r.week)}${weekStart(today) === r.week ? " (so far)" : ""}</h2>
+        <p class="recap-headline">${recapHeadline(r)}</p>
+        ${recapStats(r)}
+      </section>
+
+      <section class="card">
+        <h2>Personal bests</h2>
+        ${r.records.length
+          ? html`<ul class="recap-list">${r.records.map(
+              (p) => html`<li><a class="plain" href="${exerciseHref(p.exercise)}"><b>${displayName(p.exercise)}</b></a> ${formatLoad({ weight_kg: p.weight, reps: p.reps })} <span class="muted">· ${shortDate(p.day)}</span></li>`,
+            )}</ul>`
+          : html`<p class="muted" style="margin: 0">No new weight records this week.</p>`}
+      </section>
+
+      ${r.stalled.length
+        ? html`<section class="card">
+            <h2>Needs attention</h2>
+            <p style="margin: 0 0 8px">No progress in the last 3 sessions. Try a deload or a new rep range:</p>
+            <ul class="recap-list">${r.stalled.map((e) => html`<li><a class="plain" href="${exerciseHref(e)}"><b>${displayName(e)}</b></a></li>`)}</ul>
+          </section>`
+        : ""}
+
+      <section class="card">
+        <h2>Next up</h2>
+        <p style="margin: 0"><span class="swatch" style="background: var(--${r.next}); display: inline-block; margin-right: 6px"></span><b>${DAY_LABELS[r.next]}</b> starts the next week of your rotation.</p>
+      </section>
     </main>`,
   );
 }

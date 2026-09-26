@@ -424,3 +424,59 @@ test("stall alert", async () => {
   );
   assert.deepEqual(detectStall(pullUps, "2026-09-14"), { sessions: 3, bodyweight: true, best: 8, bestDay: "2026-09-01", deload: null, switchReps: null });
 });
+
+test("weekly recap", async () => {
+  const lib = await import("./lib");
+  const dayOf = lib.dayLookup([
+    { name: "bench press", day: "push" },
+    { name: "pull up", day: "pull" },
+    { name: "squat", day: "legs" },
+  ]);
+  const sets = [
+    // Previous week (14-20 Sept): 1000 kg volume.
+    set("2026-09-15T08:00:00.000Z", "bench press", 80, 5),
+    set("2026-09-15T08:05:00.000Z", "bench press", 80, 5),
+    set("2026-09-17T08:00:00.000Z", "squat", 100, 0 + 1),
+    // This week (21-27 Sept).
+    set("2026-09-21T08:00:00.000Z", "bench press", 82.5, 5), // record
+    set("2026-09-21T08:05:00.000Z", "bench press", 82.5, 5),
+    set("2026-09-23T08:00:00.000Z", "pull up", 0, 8),
+    set("2026-09-25T08:00:00.000Z", "squat", 100, 5), // not a record (same weight)
+  ];
+  const r = lib.weekRecap({
+    week: "2026-09-21",
+    sets,
+    cardio: [
+      { id: 1, performed_at: "2026-09-22T18:00:00.000Z", activity: "treadmill", minutes: 30, distance_km: null },
+      { id: 2, performed_at: "2026-09-26T09:00:00.000Z", activity: "treadmill", minutes: 60, distance_km: 7 },
+    ],
+    bodyWeight: [
+      { measured_on: "2026-09-14", weight_kg: 81.7 },
+      { measured_on: "2026-09-24", weight_kg: 81.3 },
+    ],
+    steps: [
+      { day: "2026-09-21", steps: 9000 },
+      { day: "2026-09-22", steps: 6000 },
+      { day: "2026-09-23", steps: 8000 },
+    ],
+    dayOf,
+    timeZone: "UTC",
+    cardioGoal: 90,
+    stepsGoal: 8000,
+  });
+  assert.equal(r.sessions, 5); // Mon, Tue (cardio), Wed, Fri, Sat (cardio)
+  assert.deepEqual(r.splitDone, { push: true, pull: true, legs: true });
+  assert.equal(r.sets, 4);
+  assert.equal(r.volumeKg, 825 + 500); // 82.5×5×2 + 100×5
+  assert.equal(r.volumeChangePct, Math.round(((1325 - 900) / 900) * 100)); // prev: 80×5×2 + 100×1 = 900
+  assert.deepEqual(r.records, [{ exercise: "bench press", weight: 82.5, reps: 5, day: "2026-09-21" }]);
+  assert.equal(r.cardioMinutes, 90);
+  assert.deepEqual(r.steps, { total: 23000, average: 7667, syncedDays: 3, daysAtGoal: 2, goal: 8000 });
+  assert.deepEqual(r.bodyWeight, { kg: 81.3, changeKg: -0.4 });
+  assert.equal(r.next, "push"); // after legs on Friday
+  assert.equal(r.complete, true);
+
+  assert.equal(lib.recapWeekFor("2026-09-27"), "2026-09-21"); // Sunday: this week
+  assert.equal(lib.recapWeekFor("2026-09-28"), "2026-09-21"); // Monday: last week
+  assert.equal(lib.recapWeekFor("2026-09-24"), "2026-09-14"); // Thursday: last week
+});
