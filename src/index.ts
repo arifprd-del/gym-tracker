@@ -319,6 +319,27 @@ app.post("/api/brain/check", async (c) => {
 });
 
 // Sets or clears an exercise's sets x reps target, e.g. { name, target: "3x8-12" } or { name, target: "" }.
+// Sleep typed on the Brain page: replaces that night's value (and the sync won't overwrite it); 0 clears the night.
+const sleepEntrySchema = z.object({ day: z.string(), minutes: z.number().int().min(0).max(1440) });
+app.post("/api/brain/sleep", async (c) => {
+  const parsed = sleepEntrySchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ error: "Enter hours and minutes." }, 400);
+  const { day, minutes } = parsed.data;
+  const today = localDay(new Date(), c.env.TIMEZONE);
+  if (!isIsoDate(day) || day > today || day < addDays(today, -7)) return c.json({ error: "Pick a night in the last week." }, 400);
+  if (minutes === 0) {
+    await c.env.DB.prepare("DELETE FROM sleep WHERE day = ?").bind(day).run();
+    return c.json({ message: "Cleared" });
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO sleep (day, minutes, source) VALUES (?, ?, 'manual')
+     ON CONFLICT (day) DO UPDATE SET minutes = excluded.minutes, source = 'manual', synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+  )
+    .bind(day, minutes)
+    .run();
+  return c.json({ message: `Saved ${formatSleep(minutes)}` });
+});
+
 app.post("/api/exercises/target", async (c) => {
   const body = (await readJson(c)) as { name?: unknown; target?: unknown };
   if (typeof body.name !== "string" || typeof body.target !== "string") return c.json({ message: "Enter a target like 3x8-12." }, 400);
@@ -457,12 +478,17 @@ app.post("/sync/sleep", async (c) => {
   }
   const row = await c.env.DB.prepare(
     `INSERT INTO sleep (day, minutes) VALUES (?, ?)
-     ON CONFLICT (day) DO UPDATE SET minutes = MAX(minutes, excluded.minutes), synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-     RETURNING minutes`,
+     ON CONFLICT (day) DO UPDATE SET
+       minutes = CASE WHEN source = 'manual' THEN minutes ELSE MAX(minutes, excluded.minutes) END,
+       synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     RETURNING minutes, source`,
   )
     .bind(day, minutes)
-    .first<{ minutes: number }>();
+    .first<{ minutes: number; source: string }>();
   const saved = row?.minutes ?? minutes;
+  if (row?.source === "manual") {
+    return c.json({ message: `Kept the ${formatSleep(saved)} you typed for the night ending ${day}.`, day, minutes: saved });
+  }
   return c.json({ message: `Saved ${formatSleep(saved)} of sleep for the night ending ${day}.`, day, minutes: saved });
 });
 
@@ -677,7 +703,7 @@ app.get("/brain", async (c) => {
   const [rounds, checks, sleep] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM speed_rounds WHERE performed_at >= ? ORDER BY performed_at").bind(since).all<SpeedRound>(),
     c.env.DB.prepare("SELECT * FROM brain_checks ORDER BY performed_at DESC LIMIT 26").all<BrainCheck>(),
-    c.env.DB.prepare("SELECT day, minutes FROM sleep WHERE day > ? ORDER BY day").bind(addDays(today, -14)).all<SleepRow>(),
+    c.env.DB.prepare("SELECT day, minutes, source FROM sleep WHERE day > ? ORDER BY day").bind(addDays(today, -14)).all<SleepRow>(),
   ]);
 
   const bestByDay = new Map<string, number>();
@@ -695,9 +721,10 @@ app.get("/brain", async (c) => {
   }));
 
   const sleepByDay = new Map(sleep.results.map((r) => [r.day, r.minutes]));
+  const typed = new Set(sleep.results.filter((r) => r.source === "manual").map((r) => r.day));
   const nights = Array.from({ length: 14 }, (_, i) => {
     const day = addDays(today, i - 13);
-    return { day, minutes: sleepByDay.get(day) ?? null };
+    return { day, minutes: sleepByDay.get(day) ?? null, typed: typed.has(day) };
   });
   const week = nights.slice(-7).flatMap((n) => (n.minutes === null ? [] : [n.minutes]));
 

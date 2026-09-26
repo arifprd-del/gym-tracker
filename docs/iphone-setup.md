@@ -100,6 +100,8 @@ page's Sleep card shows it. The tracker works out whether the number is hours, m
   first pick it up, recorded as *In Bed*, so leave out the **Value is not In Bed** filter.
 - **Far too much sleep?** If both your iPhone and an Apple Watch record sleep, the nights can add up twice. Add the
   filter **Source is** *your Apple Watch* to step 4.
+- **Typing it instead:** the Sleep card on the Brain page has a box to type a night's hours and minutes (up to a week
+  back). A typed night replaces the synced value and the nightly sync won't change it; 0 hours clears it.
 - Like steps, the higher value for a night is kept, so re-running is safe, and a `date` field works for a missed night.
 
 ## Brain training

@@ -16,12 +16,18 @@ export type BrainPageData = {
   daily: { day: string; bestMs: number }[]; // best flash per day with a completed round
   checks: { day: string; pvtMedianMs: number; pvtLapses: number; dsstCorrect: number }[];
   checkDue: boolean;
-  sleep: { nights: { day: string; minutes: number | null }[]; lastNight: number | null; average7: number | null; syncedNights: number };
+  sleep: { nights: { day: string; minutes: number | null; typed: boolean }[]; lastNight: number | null; average7: number | null; syncedNights: number };
 };
 
 const styles = `
 .brain .status { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .brain .status .stat b { font-size: 22px; }
+.sleep-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.sleep-form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.sleep-form label:first-child { flex: 1 1 100%; }
+.sleep-form label:first-child select { width: 100%; max-width: 260px; }
+.sleep-form input { width: 64px; font-size: 17px; }
+.sleep-form select { font: inherit; font-size: 16px; padding: 10px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 .chip-due { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--nudge-bg); font-size: 13px; font-weight: 600; }
 .qg-stage { position: relative; width: 100%; max-width: 380px; margin: 0 auto; aspect-ratio: 1; background: var(--bg); border-radius: 50%; border: 1px solid var(--line); }
 .qg-slot { position: absolute; width: 18%; aspect-ratio: 1; transform: translate(-50%, -50%); display: grid; place-items: center;
@@ -102,7 +108,7 @@ function sleepChart(nights: BrainPageData["sleep"]["nights"]): Html {
       const bar = n.minutes
         ? html`<rect x="${bx.toFixed(1)}" y="${y(n.minutes).toFixed(1)}" width="${(slot * 0.64).toFixed(1)}" height="${(H - B - y(n.minutes)).toFixed(1)}" rx="2" fill="${n.minutes < 420 ? "var(--pull)" : "var(--accent)"}"></rect>`
         : "";
-      return html`<g>${bar}<rect x="${(L + i * slot).toFixed(1)}" y="0" width="${slot.toFixed(1)}" height="${H - B}" fill="transparent"><title>Night ending ${shortDate(n.day)}: ${n.minutes === null ? "not synced" : formatSleep(n.minutes)}</title></rect></g>`;
+      return html`<g>${bar}<rect x="${(L + i * slot).toFixed(1)}" y="0" width="${slot.toFixed(1)}" height="${H - B}" fill="transparent"><title>Night ending ${shortDate(n.day)}: ${n.minutes === null ? "no data" : formatSleep(n.minutes) + (n.typed ? " (typed)" : "")}</title></rect></g>`;
     })}
     <text x="${L}" y="${H - 5}">${shortDate(nights[0].day)}</text>
     <text x="${W - R}" y="${H - 5}" text-anchor="end">${shortDate(nights[nights.length - 1].day)}</text>
@@ -228,6 +234,25 @@ $("qg-start").onclick = () => {
 };
 draw({ centre: "triangle", star: 1 });
 setFlash();
+
+// ---------------------------------------------------------------- Sleep typed by hand
+$("sleep-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, h = Number(f.h.value || 0), m = Number(f.m.value || 0);
+  if (!Number.isInteger(h) || !Number.isInteger(m) || h > 24 || m > 59 || h * 60 + m > 1440) {
+    $("sleep-msg").textContent = "Enter whole hours (0–24) and minutes (0–59).";
+    return;
+  }
+  f.querySelector("button").disabled = true;
+  try {
+    await api("/api/brain/sleep", { day: f.day.value, minutes: h * 60 + m });
+    location.replace("/brain#sleep");
+    location.reload();
+  } catch (err) {
+    $("sleep-msg").textContent = err.message;
+    f.querySelector("button").disabled = false;
+  }
+});
 
 // ---------------------------------------------------------------- Brain Check
 const SYMBOLS = [
@@ -402,10 +427,17 @@ export function brainPage(d: BrainPageData): Html {
 
       <section class="card" id="sleep" style="display: grid; gap: 10px">
         <h2 style="margin: 0">Sleep</h2>
-        ${d.sleep.syncedNights === 0
-          ? html`<p class="muted" style="margin: 0">Not synced yet. Add the sleep step to your nightly Shortcut (see <b>docs/iphone-setup.md</b>), using the same sync key as steps.</p>`
-          : html`<p style="margin: 0">Last night <b>${d.sleep.lastNight === null ? "not synced" : formatSleep(d.sleep.lastNight)}</b> · 7-night average <b>${d.sleep.average7 === null ? "–" : formatSleep(d.sleep.average7)}</b>. About 7 hours is linked to the lowest dementia risk.</p>
+        ${d.sleep.nights.every((n) => n.minutes === null)
+          ? html`<p class="muted" style="margin: 0">No sleep yet. The nightly Shortcut sends it (see <b>docs/iphone-setup.md</b>), or type it below.</p>`
+          : html`<p style="margin: 0">Last night <b>${d.sleep.lastNight === null ? "–" : formatSleep(d.sleep.lastNight)}</b> · 7-night average <b>${d.sleep.average7 === null ? "–" : formatSleep(d.sleep.average7)}</b>. About 7 hours is linked to the lowest dementia risk.</p>
               ${sleepChart(d.sleep.nights)}`}
+        <form class="sleep-form" id="sleep-form">
+          <label>Night <select name="day">${d.sleep.nights.slice(-7).reverse().map((n, i) => html`<option value="${n.day}">${i === 0 ? "Last night" : i === 1 ? "Night before" : `Ending ${shortDate(n.day)}`}</option>`)}</select></label>
+          <label>Hours <input name="h" inputmode="numeric" pattern="[0-9]*" maxlength="2" placeholder="7" autocomplete="off" required /></label>
+          <label>Min <input name="m" inputmode="numeric" pattern="[0-9]*" maxlength="2" placeholder="0" autocomplete="off" /></label>
+          <button type="submit" class="primary">Save</button>
+        </form>
+        <p class="muted" id="sleep-msg" style="margin: 0; font-size: 13px">Typing a night replaces what the phone sent, and the nightly sync won't change it. 0 hours clears it.</p>
       </section>
     </main>
     <script id="brain-data" type="application/json">${raw(json)}</script>

@@ -822,7 +822,7 @@ export type BrainCheck = {
   dsst_correct: number;
   dsst_errors: number;
 };
-export type SleepRow = { day: string; minutes: number };
+export type SleepRow = { day: string; minutes: number; source?: "sync" | "manual" };
 
 /**
  * Sleep from a Shortcut, whose unit depends on how it was built: hours (e.g. 7.4), minutes (445) or seconds (26700).

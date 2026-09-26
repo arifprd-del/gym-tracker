@@ -55,7 +55,8 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   trial's speed-of-processing training) with a streak and a best-flash chart; a weekly *Brain Check* (90 s reaction
   test and 90 s symbol match) with trend charts; and last night's sleep with a 14-night chart. Brain training 5 days a
   week is on the weekly checklist, and the recap shows brain days and average sleep.
-- **Sleep:** the nightly Shortcut can also post last night's sleep to `/sync/sleep` with the same sync key. See
+- **Sleep:** the nightly Shortcut can also post last night's sleep to `/sync/sleep` with the same sync key, or you
+  can type a night on the Brain page (a typed night isn't overwritten by the sync). See
   [docs/iphone-setup.md](docs/iphone-setup.md#nightly-sleep-sync).
 - **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
 
