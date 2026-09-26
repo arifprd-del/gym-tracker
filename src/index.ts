@@ -446,6 +446,10 @@ app.post("/sync/sleep", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const minutes = sleepMinutes(body.sleep ?? body.minutes ?? body.hours);
   if (minutes === null) return c.json({ message: "Send last night's sleep as a number (hours, minutes or seconds)." }, 400);
+  if (minutes === 0) {
+    // Usually no sleep samples matched (no sleep tracked, or the phone was locked), so don't record a night of 0.
+    return c.json({ message: "No sleep arrived (0), so nothing was saved. Check that Health → Sleep has last night's sleep." });
+  }
   const today = localDay(new Date(), c.env.TIMEZONE);
   const day = body.date === undefined || body.date === "" ? today : body.date;
   if (!isIsoDate(day) || day > today || day < addDays(today, -7)) {
