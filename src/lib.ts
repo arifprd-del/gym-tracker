@@ -668,3 +668,101 @@ export function recapWeekFor(today: string): string {
   const weekday = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0 = Sunday
   return weekday === 0 ? weekStart(today) : addDays(weekStart(today), -7);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Workout summary for one day
+
+export type ExerciseResult = {
+  exercise: string;
+  sets: { weight: number; reps: number }[];
+  best: { weight: number; reps: number }; // heaviest, then most reps
+  previous: { weight: number; reps: number; day: string } | null; // best set of the previous session
+  trend: "up" | "same" | "down" | "new"; // today's best est. 1RM (or reps) vs the previous session
+  record: boolean;
+};
+
+export type WorkoutSummary = {
+  day: string;
+  main: WorkoutDay | null; // the day's main workout type, or null with no lifting
+  durationMinutes: number | null; // first to last entry, when there are at least two
+  sets: number;
+  volumeKg: number;
+  exercises: ExerciseResult[];
+  previousSameType: { day: string; volumeKg: number } | null;
+  volumeChangePct: number | null;
+  records: number;
+  beatLastTime: number;
+  cardio: { activity: string; minutes: number; distance: number | null }[];
+  cardioMinutes: number;
+  next: SplitDay;
+};
+
+export function workoutSummary(input: {
+  day: string;
+  sets: SetRow[]; // the day's sets plus earlier history
+  cardio: CardioRow[];
+  dayOf: DayOf;
+  timeZone: string;
+}): WorkoutSummary {
+  const { day, timeZone } = input;
+  const localOf = (iso: string) => localDay(iso, timeZone);
+  const history = input.sets.filter((s) => localOf(s.performed_at) <= day);
+  const todaySets = history.filter((s) => localOf(s.performed_at) === day).sort((a, b) => a.performed_at.localeCompare(b.performed_at));
+  const todayCardio = input.cardio.filter((c) => localOf(c.performed_at) === day).sort((a, b) => a.performed_at.localeCompare(b.performed_at));
+
+  const days = trainingDaysByType(history, input.dayOf, timeZone);
+  const main = days.get(day)?.main ?? null;
+
+  // Exercises in the order they were first done today.
+  const order = [...new Set(todaySets.map((s) => s.exercise))];
+  const exercises: ExerciseResult[] = order.map((exercise) => {
+    const sessions = exerciseSessions(history.filter((s) => s.exercise === exercise), timeZone);
+    const today = sessions[sessions.length - 1];
+    const before = sessions.length > 1 ? sessions[sessions.length - 2] : null;
+    const bodyweight = today.topWeight === 0 && (!before || before.topWeight === 0);
+    const measure = (s: ExerciseSession) => (bodyweight ? s.bestReps : s.bestE1rm);
+    const trend: ExerciseResult["trend"] = !before
+      ? "new"
+      : measure(today) > measure(before) + 0.01
+        ? "up"
+        : measure(today) < measure(before) - 0.01
+          ? "down"
+          : "same";
+    return {
+      exercise,
+      sets: today.sets,
+      best: { weight: today.topWeight, reps: today.bestReps },
+      previous: before ? { weight: before.topWeight, reps: before.bestReps, day: before.day } : null,
+      trend,
+      record: today.record,
+    };
+  });
+
+  const volumeKg = volume(todaySets);
+  let previousSameType: WorkoutSummary["previousSameType"] = null;
+  if (main && main !== "other") {
+    const earlier = [...days].filter(([d, e]) => d < day && e.main === main).map(([d]) => d).sort().pop();
+    if (earlier) previousSameType = { day: earlier, volumeKg: volume(history.filter((s) => localOf(s.performed_at) === earlier)) };
+  }
+
+  const times = [...todaySets.map((s) => s.performed_at), ...todayCardio.map((c) => c.performed_at)].map((t) => Date.parse(t));
+  const span = times.length >= 2 ? Math.round((Math.max(...times) - Math.min(...times)) / 60_000) : 0;
+  const durationMinutes = span >= 1 ? span : null;
+
+  return {
+    day,
+    main,
+    durationMinutes,
+    sets: todaySets.length,
+    volumeKg,
+    exercises,
+    previousSameType,
+    volumeChangePct:
+      previousSameType && previousSameType.volumeKg > 0 ? Math.round(((volumeKg - previousSameType.volumeKg) / previousSameType.volumeKg) * 100) : null,
+    records: exercises.filter((e) => e.record).length,
+    beatLastTime: exercises.filter((e) => e.trend === "up").length,
+    cardio: todayCardio.map((c) => ({ activity: c.activity, minutes: c.minutes, distance: c.distance_km })),
+    cardioMinutes: todayCardio.reduce((sum, c) => sum + c.minutes, 0),
+    next: todaysPlan(days, day).next,
+  };
+}

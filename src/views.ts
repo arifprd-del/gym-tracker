@@ -17,6 +17,7 @@ import {
   type ExerciseSession,
   type Stall,
   type WeekRecap,
+  type WorkoutSummary,
   type DaySummary,
   type SetRow,
   type SplitDay,
@@ -30,7 +31,7 @@ const styles = `
 :root {
   --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #5f6673; --line: #e3e6eb;
   --accent: #2563eb; --accent-soft: #dbe6fd; --on-accent: #ffffff; --danger: #c52a2a;
-  --heat-0: #e8ebf0; --nudge-bg: #fff1d6;
+  --heat-0: #e8ebf0; --nudge-bg: #fff1d6; --good: #0e7a52;
   --push: #2a78d6; --pull: #eb6834; --legs: #1baf7a; --other: #9aa0aa; --cardio: #4a3aa7;
   color-scheme: light;
 }
@@ -38,7 +39,7 @@ const styles = `
   :root {
     --bg: #0f1115; --card: #181b21; --text: #e8eaee; --muted: #9aa1ad; --line: #2a2f38;
     --accent: #6d9bff; --accent-soft: #1f2b44; --on-accent: #0f1115; --danger: #ff7474;
-    --heat-0: #232833; --nudge-bg: #3a2f17;
+    --heat-0: #232833; --nudge-bg: #3a2f17; --good: #4fd6a0;
     --push: #3987e5; --pull: #d95926; --legs: #199e70; --other: #5b6270; --cardio: #9085e9;
     color-scheme: dark;
   }
@@ -119,6 +120,10 @@ a.plain:hover, a.plain:focus-visible { text-decoration: underline; }
 .recap-grid b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
 .recap-grid span { color: var(--muted); font-size: 13px; }
 .recap-list { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.trend { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.trend.up { color: var(--good); }
+.trend.down { color: var(--danger); }
+.trend.same, .trend.new { color: var(--muted); }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .login { max-width: 360px; margin: 12vh auto 0; }
 .login form { display: grid; gap: 12px; }
@@ -543,7 +548,8 @@ export function dashboardPage(data: DashboardData): Html {
   const { todaySummary: t } = data;
   let lastDay = "";
   const recentRows = data.recent.map((s) => {
-    const dayHeader = s.day !== lastDay ? html`<tr class="day"><td colspan="5">${shortDate(s.day)}</td></tr>` : "";
+    const dayHeader =
+      s.day !== lastDay ? html`<tr class="day"><td colspan="5"><a class="plain" href="/summary?day=${s.day}">${shortDate(s.day)} · summary →</a></td></tr>` : "";
     lastDay = s.day;
     return html`${dayHeader}
       <tr>
@@ -899,6 +905,93 @@ export function recapPage(r: WeekRecap, today: string): Html {
         <h2>Next up</h2>
         <p style="margin: 0"><span class="swatch" style="background: var(--${r.next}); display: inline-block; margin-right: 6px"></span><b>${DAY_LABELS[r.next]}</b> starts the next week of your rotation.</p>
       </section>
+    </main>`,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Workout summary
+
+const TREND_LABEL = { up: "↑ better", same: "= same", down: "↓ lower", new: "new" } as const;
+
+export function summaryPage(s: WorkoutSummary, today: string): Html {
+  const isToday = s.day === today;
+  const typeLabel = s.main ? DAY_LABELS[s.main] : null;
+  const headline =
+    s.sets === 0 && s.cardio.length === 0
+      ? "Nothing logged on this day."
+      : [
+          s.sets ? `${typeLabel && typeLabel !== "Other" ? `${typeLabel} day` : "Workout"} done 💪` : "Cardio done 💪",
+          s.records ? `${s.records} personal ${s.records === 1 ? "best" : "bests"}` : "",
+          s.beatLastTime && !s.records ? `beat last time on ${s.beatLastTime}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+  const stat = (value: string, label: string) => html`<div class="stat"><b>${value}</b><span>${label}</span></div>`;
+  const change =
+    s.volumeChangePct === null || !s.previousSameType
+      ? null
+      : `${s.volumeChangePct > 0 ? "+" : s.volumeChangePct < 0 ? "−" : "±"}${Math.abs(s.volumeChangePct)}% vs last ${typeLabel} (${shortDate(s.previousSameType.day)})`;
+  return layout(
+    `Workout ${shortDate(s.day)} · Arif Gym Tracker`,
+    html`<main>
+      <header>
+        <h1 style="white-space: normal">${isToday ? "Today's workout" : `Workout · ${shortDate(s.day)}`}</h1>
+        <div class="row">
+          ${isToday ? html`<a class="button" href="/log">Log</a>` : ""}
+          <a class="button primary" href="/">Dashboard</a>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2 style="display: flex; align-items: center; gap: 8px">
+          ${s.main ? html`<span class="swatch" style="background: var(--${s.main})"></span>` : ""}${shortDate(s.day)}
+        </h2>
+        <p class="recap-headline" style="margin: 0">${headline}</p>
+        ${change ? html`<p class="muted" style="margin: 6px 0 0">Volume ${change}</p>` : ""}
+      </section>
+
+      ${s.sets || s.cardio.length
+        ? html`<section class="stats compact" aria-label="Summary">
+            ${stat(s.durationMinutes === null ? "–" : formatMinutes(s.durationMinutes), "duration")}
+            ${stat(String(s.sets), `sets · ${s.exercises.length} ${s.exercises.length === 1 ? "exercise" : "exercises"}`)}
+            ${stat(`${Math.round(s.volumeKg).toLocaleString("en-GB")} kg`, "volume")}
+            ${s.cardio.length ? stat(formatMinutes(s.cardioMinutes), "cardio") : ""}
+          </section>`
+        : ""}
+
+      ${s.exercises.length
+        ? html`<section class="card">
+            <h2>Exercises</h2>
+            <table class="history">
+              <tr><th>Exercise</th><th>Sets</th><th class="num">vs last time</th></tr>
+              ${s.exercises.map(
+                (e) => html`<tr>
+                  <td><a class="plain" href="${exerciseHref(e.exercise)}"><b>${displayName(e.exercise)}</b></a>${e.record ? " 🏆" : ""}</td>
+                  <td class="sets">${e.sets.map((x) => (x.weight > 0 ? `${formatKg(x.weight)}×${x.reps}` : `${x.reps}`)).join(", ")}</td>
+                  <td class="num">
+                    <span class="trend ${e.trend}">${TREND_LABEL[e.trend]}</span>
+                    ${e.previous ? html`<br /><span class="muted" style="font-size: 12px">last ${formatLoad({ weight_kg: e.previous.weight, reps: e.previous.reps })}</span>` : ""}
+                  </td>
+                </tr>`,
+              )}
+            </table>
+          </section>`
+        : ""}
+
+      ${s.cardio.length
+        ? html`<section class="card">
+            <h2>Cardio</h2>
+            <ul class="recap-list">${s.cardio.map((c) => html`<li><b>${displayName(c.activity)}</b> ${formatCardio({ minutes: c.minutes, distance_km: c.distance })}</li>`)}</ul>
+          </section>`
+        : ""}
+
+      ${isToday
+        ? html`<section class="card">
+            <h2>Next workout</h2>
+            <p style="margin: 0"><span class="swatch" style="background: var(--${s.next}); display: inline-block; margin-right: 6px"></span><b>${DAY_LABELS[s.next]}</b> is next in your rotation. Rest well.</p>
+          </section>`
+        : ""}
     </main>`,
   );
 }

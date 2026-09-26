@@ -480,3 +480,57 @@ test("weekly recap", async () => {
   assert.equal(lib.recapWeekFor("2026-09-28"), "2026-09-21"); // Monday: last week
   assert.equal(lib.recapWeekFor("2026-09-24"), "2026-09-14"); // Thursday: last week
 });
+
+test("workout summary", async () => {
+  const lib = await import("./lib");
+  const dayOf = lib.dayLookup([
+    { name: "bench press", day: "push" },
+    { name: "overhead press", day: "push" },
+    { name: "dips", day: "push" },
+  ]);
+  const sets = [
+    // Previous push day (21 Sept): 800 + 250 = 1050 kg
+    set("2026-09-21T17:00:00.000Z", "bench press", 80, 5),
+    set("2026-09-21T17:05:00.000Z", "bench press", 80, 5),
+    set("2026-09-21T17:15:00.000Z", "overhead press", 50, 5),
+    set("2026-09-21T17:25:00.000Z", "dips", 0, 12),
+    // Today (24 Sept)
+    set("2026-09-24T17:00:00.000Z", "bench press", 82.5, 5), // up + record
+    set("2026-09-24T17:04:00.000Z", "bench press", 82.5, 5),
+    set("2026-09-24T17:20:00.000Z", "overhead press", 47.5, 5), // down
+    set("2026-09-24T17:30:00.000Z", "dips", 0, 12), // same
+    set("2026-09-24T17:40:00.000Z", "chest fly", 20, 10), // new, "other" type
+  ];
+  const s = lib.workoutSummary({
+    day: "2026-09-24",
+    sets,
+    cardio: [{ id: 1, performed_at: "2026-09-24T18:05:00.000Z", activity: "treadmill", minutes: 20, distance_km: 2.5 }],
+    dayOf,
+    timeZone: "UTC",
+  });
+  assert.equal(s.main, "push");
+  assert.equal(s.durationMinutes, 65); // 17:00 -> 18:05
+  assert.equal(s.sets, 5);
+  assert.equal(s.volumeKg, 825 + 237.5 + 200);
+  assert.deepEqual(
+    s.exercises.map((e) => [e.exercise, e.trend, e.record, e.sets.length]),
+    [
+      ["bench press", "up", true, 2],
+      ["overhead press", "down", false, 1],
+      ["dips", "same", false, 1],
+      ["chest fly", "new", false, 1],
+    ],
+  );
+  assert.deepEqual(s.exercises[0].previous, { weight: 80, reps: 5, day: "2026-09-21" });
+  assert.deepEqual(s.previousSameType, { day: "2026-09-21", volumeKg: 1050 });
+  assert.equal(s.volumeChangePct, Math.round(((1262.5 - 1050) / 1050) * 100));
+  assert.equal(s.records, 1);
+  assert.equal(s.beatLastTime, 1);
+  assert.equal(s.cardioMinutes, 20);
+  assert.equal(s.next, "pull");
+
+  const empty = lib.workoutSummary({ day: "2026-09-25", sets, cardio: [], dayOf, timeZone: "UTC" });
+  assert.equal(empty.main, null);
+  assert.equal(empty.sets, 0);
+  assert.equal(empty.durationMinutes, null);
+});

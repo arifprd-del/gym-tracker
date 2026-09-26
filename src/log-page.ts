@@ -86,6 +86,7 @@ main.log { padding-bottom: 385px; gap: 14px; }
   transition: opacity .2s, transform .2s; }
 .toast[hidden] { display: flex; opacity: 0; transform: translateY(8px); pointer-events: none; }
 .toast button { background: none; border: 0; color: inherit; font-weight: 700; text-decoration: underline; padding: 4px; }
+.finish { display: block; text-align: center; margin-top: 12px; padding: 12px; font-weight: 700; border-radius: 12px; }
 .today-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line);
   cursor: pointer; }
 .today-row:last-child { border-bottom: 0; }
@@ -498,6 +499,7 @@ export function logPage(data: LogPageData) {
         <section class="card" id="today-card" hidden>
           <h2>Today</h2>
           <div id="today"></div>
+          <a class="button primary finish" href="/summary">Finish workout →</a>
         </section>
       </main>
 

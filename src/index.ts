@@ -32,6 +32,7 @@ import {
   stallsByExercise,
   recapWeekFor,
   weekRecap,
+  workoutSummary,
   type WeekRecap,
   stepsSummary,
   lastSessionBest,
@@ -57,7 +58,7 @@ import {
   type StepsRow,
 } from "./lib";
 import { logPage, type ExerciseButton } from "./log-page";
-import { dashboardPage, exercisePage, loginPage, recapPage, stepsKeyPage, type ExerciseRecord } from "./views";
+import { dashboardPage, exercisePage, loginPage, recapPage, stepsKeyPage, summaryPage, type ExerciseRecord } from "./views";
 
 type Env = {
   DB: D1Database;
@@ -503,6 +504,22 @@ app.get("/exercise/:name", async (c) => {
     }),
     sets.results.length || button ? 200 : 404,
   );
+});
+
+// Summary of one day's workout: ?day=YYYY-MM-DD, today by default.
+app.get("/summary", async (c) => {
+  const today = localDay(new Date(), c.env.TIMEZONE);
+  const asked = c.req.query("day");
+  const day = isIsoDate(asked) && asked <= today ? asked : today;
+  const utc = (d: string) => new Date(`${d}T00:00:00Z`).toISOString();
+  const [sets, cardio, exercises] = await Promise.all([
+    // A year of history for "vs last time" and records; a day of margin covers time zones.
+    c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ? AND performed_at < ?").bind(utc(addDays(day, -366)), utc(addDays(day, 2))).all<SetRow>(),
+    c.env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ? AND performed_at < ?").bind(utc(addDays(day, -1)), utc(addDays(day, 2))).all<CardioRow>(),
+    c.env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
+  ]);
+  const summary = workoutSummary({ day, sets: sets.results, cardio: cardio.results, dayOf: dayLookup(exercises.results), timeZone: c.env.TIMEZONE });
+  return c.html(summaryPage(summary, today));
 });
 
 // Weekly recap: ?week=YYYY-MM-DD (any day in the week); defaults to the same week as the dashboard card.
