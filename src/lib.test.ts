@@ -218,7 +218,7 @@ test("habit features", async () => {
   assert.deepEqual(lib.todaysPlan(new Map(), "2026-09-23"), { next: "push", doneToday: null });
 
   // Weekly checklist for the week of Mon 21 Sept.
-  const list = lib.weeklyChecklist({ days, cardioMinutesThisWeek: 55, cardioGoalMinutes: 90, weighedInThisWeek: true, today: "2026-09-24" });
+  const list = lib.weeklyChecklist({ days, cardioMinutesThisWeek: 55, cardioGoalMinutes: 90, weighedInThisWeek: true, brainDaysThisWeek: 2, today: "2026-09-24" });
   assert.deepEqual(
     list.map((i) => [i.key, i.done, i.detail]),
     [
@@ -227,6 +227,7 @@ test("habit features", async () => {
       ["legs", false, ""],
       ["cardio", false, "55/90 min"],
       ["weigh-in", true, ""],
+      ["brain", false, "2/5 days"],
     ],
   );
 
@@ -562,4 +563,30 @@ test("sets x reps targets and double progression", async () => {
     { weight: 80, reps: 9 },
     { weight: 82.5, reps: 8 },
   ]);
+});
+
+test("brain training helpers", async () => {
+  const { sleepMinutes, formatSleep, dayStreak, pvtStats, brainCheckDue } = await import("./lib");
+  assert.equal(sleepMinutes(7.5), 450); // hours
+  assert.equal(sleepMinutes("445"), 445); // minutes
+  assert.equal(sleepMinutes(26_700), 445); // seconds
+  assert.equal(sleepMinutes(0), 0);
+  assert.equal(sleepMinutes(-1), null);
+  assert.equal(sleepMinutes(100_000), null);
+  assert.equal(sleepMinutes("lots"), null);
+  assert.equal(formatSleep(444), "7 h 24 min");
+  assert.equal(formatSleep(360), "6 h");
+  assert.equal(formatSleep(45), "45 min");
+
+  assert.equal(dayStreak(["2026-09-24", "2026-09-25", "2026-09-26"], "2026-09-26"), 3);
+  assert.equal(dayStreak(["2026-09-24", "2026-09-25"], "2026-09-26"), 2); // today not done yet
+  assert.equal(dayStreak(["2026-09-23"], "2026-09-26"), 0);
+
+  assert.deepEqual(pvtStats([300, 250, 600, 280, 50]), { medianMs: 290, lapses: 1 }); // 50 ms is a false start
+  assert.deepEqual(pvtStats([320, 280, 310]), { medianMs: 310, lapses: 0 });
+  assert.equal(pvtStats([]), null);
+
+  assert.equal(brainCheckDue(null, "2026-09-26"), true);
+  assert.equal(brainCheckDue("2026-09-22", "2026-09-26"), false);
+  assert.equal(brainCheckDue("2026-09-19", "2026-09-26"), true);
 });

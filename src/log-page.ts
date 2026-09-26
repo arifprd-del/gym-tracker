@@ -523,6 +523,7 @@ export function logPage(data: LogPageData) {
           <h1>Log</h1>
           <div class="row">
             <a class="button" href="/#body-weight">Weigh-in</a>
+            <a class="button" href="/brain">Brain</a>
             <a class="button" href="/">Dashboard</a>
           </div>
         </header>

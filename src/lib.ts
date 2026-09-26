@@ -280,12 +280,15 @@ export function todaysPlan(days: Map<string, TrainingDay>, today: string): { nex
 
 export type ChecklistItem = { key: string; label: string; done: boolean; detail: string };
 
-/** This week's (Monday to Sunday) goals: each split day once, the cardio minutes goal and a weigh-in. */
+export const BRAIN_DAYS_GOAL = 5;
+
+/** This week's (Monday to Sunday) goals: each split day once, the cardio minutes goal, a weigh-in and brain training. */
 export function weeklyChecklist(input: {
   days: Map<string, TrainingDay>;
   cardioMinutesThisWeek: number;
   cardioGoalMinutes: number;
   weighedInThisWeek: boolean;
+  brainDaysThisWeek: number;
   today: string;
 }): ChecklistItem[] {
   const thisWeek = weekStart(input.today);
@@ -307,6 +310,12 @@ export function weeklyChecklist(input: {
     detail: `${minutes}/${input.cardioGoalMinutes} min`,
   });
   items.push({ key: "weigh-in", label: "Weigh-in", done: input.weighedInThisWeek, detail: "" });
+  items.push({
+    key: "brain",
+    label: "Brain",
+    done: input.brainDaysThisWeek >= BRAIN_DAYS_GOAL,
+    detail: `${input.brainDaysThisWeek}/${BRAIN_DAYS_GOAL} days`,
+  });
   return items;
 }
 
@@ -591,7 +600,9 @@ export type WeekRecap = {
   bodyWeight: { kg: number; changeKg: number | null } | null;
   stalled: string[];
   next: SplitDay;
-  complete: boolean; // push, pull, legs, the cardio goal and a weigh-in all done
+  complete: boolean; // push, pull, legs, the cardio goal and a weigh-in all done (and brain days, once added)
+  brain?: { days: number; goal: number };
+  sleep?: { averageMinutes: number | null; nights: number };
 };
 
 export function weekRecap(input: {
@@ -796,4 +807,68 @@ export function parseTarget(text: string): Target | null | undefined {
 /** 3 x 8-12 -> "3 × 8–12", 4 x 5 -> "4 × 5". */
 export function formatTarget(t: Target): string {
   return `${t.sets} × ${t.repsMin === t.repsMax ? t.repsMin : `${t.repsMin}–${t.repsMax}`}`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Brain training, Brain Check and sleep
+
+export type SpeedRound = { id: number; performed_at: string; best_ms: number | null; final_ms: number; hits: number; trials: number };
+export type BrainCheck = {
+  id: number;
+  performed_at: string;
+  pvt_median_ms: number;
+  pvt_lapses: number;
+  pvt_false_starts: number;
+  dsst_correct: number;
+  dsst_errors: number;
+};
+export type SleepRow = { day: string; minutes: number };
+
+/**
+ * Sleep from a Shortcut, whose unit depends on how it was built: hours (e.g. 7.4), minutes (445) or seconds (26700).
+ * A night's sleep falls in a different range for each unit, so the unit can be told apart. Returns minutes, or null.
+ */
+export function sleepMinutes(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value.replace(/[\s,]/g, "")) : NaN;
+  if (!Number.isFinite(n) || n < 0) return null;
+  let minutes: number;
+  if (n <= 24) minutes = n * 60; // hours
+  else if (n <= 1440) minutes = n; // minutes
+  else if (n <= 86_400) minutes = n / 60; // seconds
+  else return null;
+  return Math.round(minutes);
+}
+
+/** "7 h 24 min", "6 h", "45 min". */
+export function formatSleep(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m} min`;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+/** Consecutive days with training, ending today, or ending yesterday if today isn't done yet. */
+export function dayStreak(days: Iterable<string>, today: string): number {
+  const set = new Set(days);
+  let day = set.has(today) ? today : addDays(today, -1);
+  let streak = 0;
+  while (set.has(day)) {
+    streak++;
+    day = addDays(day, -1);
+  }
+  return streak;
+}
+
+/** Reaction-test results: median reaction time and lapses (slower than 500 ms), from the valid reactions. */
+export function pvtStats(reactionsMs: number[]): { medianMs: number; lapses: number } | null {
+  const valid = reactionsMs.filter((ms) => ms >= 100 && ms <= 5000).sort((a, b) => a - b);
+  if (valid.length === 0) return null;
+  const mid = Math.floor(valid.length / 2);
+  const medianMs = valid.length % 2 ? valid[mid] : (valid[mid - 1] + valid[mid]) / 2;
+  return { medianMs: Math.round(medianMs), lapses: valid.filter((ms) => ms > 500).length };
+}
+
+/** The Brain Check is weekly: due when there's none in the last 7 days. */
+export function brainCheckDue(lastCheckDay: string | null, today: string): boolean {
+  return !lastCheckDay || lastCheckDay <= addDays(today, -7);
 }

@@ -8,6 +8,7 @@ import {
   formatKg,
   formatLoad,
   formatMinutes,
+  formatSleep,
   SPLIT_DAYS,
   WORKOUT_DAYS,
   type BodyWeightRow,
@@ -498,6 +499,7 @@ function cardioCard(cardio: DashboardData["cardio"]): Html {
 
 function checkColour(key: string): string {
   if (key === "weigh-in") return "var(--accent)";
+  if (key === "brain") return "var(--good)";
   return `var(--${key})`;
 }
 
@@ -574,6 +576,7 @@ export function dashboardPage(data: DashboardData): Html {
         <h1>Arif Gym Tracker</h1>
         <div class="row">
           <a class="button primary" href="/log">Log a set</a>
+          <a class="button" href="/brain">Brain</a>
           <a class="button" href="/export.csv">Export CSV</a>
           <form method="post" action="/logout"><button type="submit">Sign out</button></form>
         </div>
@@ -848,6 +851,8 @@ function recapStats(r: WeekRecap): Html {
     ${item(formatMinutes(r.cardioMinutes), `cardio · goal ${formatMinutes(r.cardioGoal)}${r.cardioMinutes >= r.cardioGoal ? " ✓" : ""}`)}
     ${item(r.steps.average === null ? "–" : `${r.steps.average.toLocaleString("en-GB")}`, r.steps.average === null ? "steps · not synced" : `steps a day · ${r.steps.daysAtGoal}/${r.steps.syncedDays} days at goal`)}
     ${item(r.bodyWeight ? `${formatKg(r.bodyWeight.kg)} kg` : "–", r.bodyWeight ? (r.bodyWeight.changeKg === null ? "body weight" : `body weight · ${signed(r.bodyWeight.changeKg, " kg")}`) : "no weigh-in")}
+    ${r.brain ? item(`${r.brain.days}/${r.brain.goal}`, `brain training days${r.brain.days >= r.brain.goal ? " ✓" : ""}`) : ""}
+    ${r.sleep ? item(r.sleep.averageMinutes === null ? "–" : formatSleep(r.sleep.averageMinutes), r.sleep.averageMinutes === null ? "sleep · not synced" : `sleep a night · ${r.sleep.nights} nights synced`) : ""}
   </div>`;
 }
 

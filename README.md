@@ -23,8 +23,8 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   recent sets with delete buttons. Cardio has its own minutes-per-week chart, and cardio days are marked with a dot on
   the calendar. It supports light and dark mode and works on a phone.
 - **Habit features (Atomic Habits):**
-  - *This week* checklist: Push, Pull, Legs, the cardio goal (`CARDIO_WEEKLY_MINUTES` in `wrangler.jsonc`, default 90)
-    and a weigh-in, with a progress bar and a "Week complete" state.
+  - *This week* checklist: Push, Pull, Legs, the cardio goal (`CARDIO_WEEKLY_MINUTES` in `wrangler.jsonc`, default 90),
+    a weigh-in and brain training on 5 days, with a progress bar and a "Week complete" state.
   - *Next workout*: the next day in the Push → Pull → Legs rotation. The log screen opens on it until you've logged
     something today.
   - *Never miss twice*: a gentle banner after 4+ days without training, or late in the week when the streak is at risk.
@@ -51,6 +51,12 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
 - **Week recap (`/recap`):** a dashboard card for the week just finished (on Sundays, the week ending today) and a
   full page with ← → to browse weeks: sessions, split days done, volume vs the week before, cardio vs goal, steps,
   body weight change, the week's personal bests, stalled exercises and what's next in the rotation.
+- **Brain (`/brain`):** daily *Quick Glance* speed training (adaptive, two rounds a day, modelled on the ACTIVE
+  trial's speed-of-processing training) with a streak and a best-flash chart; a weekly *Brain Check* (90 s reaction
+  test and 90 s symbol match) with trend charts; and last night's sleep with a 14-night chart. Brain training 5 days a
+  week is on the weekly checklist, and the recap shows brain days and average sleep.
+- **Sleep:** the nightly Shortcut can also post last night's sleep to `/sync/sleep` with the same sync key. See
+  [docs/iphone-setup.md](docs/iphone-setup.md#nightly-sleep-sync).
 - **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and

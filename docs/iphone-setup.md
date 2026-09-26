@@ -78,3 +78,32 @@ shows today's count.
   hand with the Health filter set to that date and add a **Text** field `date` (`YYYY-MM-DD`) to the JSON. Up to 7 days
   back is accepted.
 - **Goal line:** the dashed line is 8,000 steps a day. Change `STEPS_DAILY_GOAL` in `wrangler.jsonc` to move it.
+
+## Nightly sleep sync
+
+The Brain page shows last night's sleep and a 14-night chart. Add these actions to the **same shortcut** as the steps
+sync, after the steps actions, so one nightly run sends both. It uses the same sync key.
+
+| # | Action | Settings |
+|---|---|---|
+| 4 | **Find Health Samples** | Type **Sleep Analysis**. Filters: **End Date is Today**, **Value is not In Bed**, **Value is not Awake**. |
+| 5 | **Get Details of Health Sample** | **Duration** of the *Health Samples* from step 4 |
+| 6 | **Calculate Statistics** | **Sum** of *Duration* |
+| 7 | **Get Contents of URL** | URL `https://gym-tracker.opinion-2nd.workers.dev/sync/sleep`. Method **POST**, the same `Authorization` header as step 3. Request Body **JSON**: a **Number** field `sleep` set to the *Statistics Result* from step 6. |
+
+Tap **▶︎** to test: the reply says e.g. "Saved 7 h 24 min of sleep for the night ending 2026-09-26", and the Brain
+page's Sleep card shows it. The tracker works out whether the number is hours, minutes or seconds.
+
+- **Far too much sleep?** If both your iPhone and an Apple Watch record sleep, the nights can add up twice. Add the
+  filter **Source is** *your Apple Watch* to step 4.
+- Like steps, the higher value for a night is kept, so re-running is safe, and a `date` field works for a missed night.
+
+## Brain training
+
+Open **Brain** from the dashboard or the Log screen.
+
+- **Quick Glance** (daily): two rounds, about 7 minutes. It's modelled on the speed-of-processing training from the
+  ACTIVE trial, the only brain training linked to lower dementia risk over 20 years. It gets faster as you improve and
+  starts each round where the last one ended. Five days a week ticks **Brain** on the weekly checklist.
+- **Brain Check** (weekly, 3 minutes): a 90-second reaction test and a 90-second symbol match. Do it at a similar time
+  each week, ideally before caffeine, and watch the trend over months rather than single scores.

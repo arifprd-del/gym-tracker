@@ -23,6 +23,13 @@ import {
   beatTargets,
   habitNudge,
   isIsoDate,
+  sleepMinutes,
+  formatSleep,
+  dayStreak,
+  brainCheckDue,
+  type SpeedRound,
+  type BrainCheck,
+  type SleepRow,
   parseSteps,
   dailySteps,
   exportCsv,
@@ -41,6 +48,7 @@ import {
   lastSessionBest,
   todaysPlan,
   weeklyChecklist,
+  BRAIN_DAYS_GOAL,
   dayLookup,
   displayName,
   formatLoad,
@@ -60,6 +68,7 @@ import {
   type SetRow,
   type StepsRow,
 } from "./lib";
+import { brainPage } from "./brain-page";
 import { logPage, type ExerciseButton } from "./log-page";
 import { dashboardPage, exercisePage, loginPage, recapPage, stepsKeyPage, summaryPage, type ExerciseRecord } from "./views";
 
@@ -122,7 +131,13 @@ async function loadRecap(env: Env, week: string): Promise<WeekRecap> {
     env.DB.prepare("SELECT day, steps FROM steps WHERE day >= ? AND day <= ?").bind(week, addDays(week, 6)).all<StepsRow>(),
     env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
   ]);
-  return weekRecap({
+  const [rounds, sleep] = await Promise.all([
+    env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ? AND performed_at < ?").bind(utc(addDays(week, -1)), to).all<{ performed_at: string }>(),
+    env.DB.prepare("SELECT day, minutes FROM sleep WHERE day >= ? AND day <= ?").bind(week, addDays(week, 6)).all<SleepRow>(),
+  ]);
+  const brainDays = new Set(rounds.results.map((r) => localDay(r.performed_at, env.TIMEZONE)).filter((d) => d >= week && d <= addDays(week, 6))).size;
+  const sleepTotal = sleep.results.reduce((sum, r) => sum + r.minutes, 0);
+  const recap = weekRecap({
     week,
     sets: sets.results,
     cardio: cardio.results,
@@ -133,6 +148,12 @@ async function loadRecap(env: Env, week: string): Promise<WeekRecap> {
     cardioGoal: cardioGoal(env),
     stepsGoal: stepsGoal(env),
   });
+  return {
+    ...recap,
+    complete: recap.complete && brainDays >= BRAIN_DAYS_GOAL,
+    brain: { days: brainDays, goal: BRAIN_DAYS_GOAL },
+    sleep: { averageMinutes: sleep.results.length ? Math.round(sleepTotal / sleep.results.length) : null, nights: sleep.results.length },
+  };
 }
 
 type ExerciseRow = { name: string; day: SplitDayName; target_sets: number | null; target_reps_min: number | null; target_reps_max: number | null };
@@ -260,6 +281,43 @@ app.post("/api/exercises", async (c) => {
   return c.json({ message: `Added ${displayName(name)}`, exercise: { name, day: parsed.data.day } });
 });
 
+const speedRoundSchema = z.object({
+  bestMs: z.number().min(1).max(2000).nullable(),
+  finalMs: z.number().min(1).max(2000),
+  hits: z.number().int().min(0).max(200),
+  trials: z.number().int().min(1).max(200),
+});
+
+app.post("/api/brain/speed", async (c) => {
+  const parsed = speedRoundSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ message: "That round couldn't be saved." }, 400);
+  const r = parsed.data;
+  const row = await c.env.DB.prepare("INSERT INTO speed_rounds (best_ms, final_ms, hits, trials) VALUES (?, ?, ?, ?) RETURNING *")
+    .bind(r.bestMs === null ? null : Math.round(r.bestMs), Math.round(r.finalMs), r.hits, r.trials)
+    .first<SpeedRound>();
+  return c.json({ message: "Round saved", round: row });
+});
+
+const brainCheckSchema = z.object({
+  pvtMedianMs: z.number().min(50).max(5000),
+  pvtLapses: z.number().int().min(0).max(500),
+  pvtFalseStarts: z.number().int().min(0).max(500),
+  dsstCorrect: z.number().int().min(0).max(500),
+  dsstErrors: z.number().int().min(0).max(500),
+});
+
+app.post("/api/brain/check", async (c) => {
+  const parsed = brainCheckSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ message: "That check couldn't be saved." }, 400);
+  const b = parsed.data;
+  const row = await c.env.DB.prepare(
+    "INSERT INTO brain_checks (pvt_median_ms, pvt_lapses, pvt_false_starts, dsst_correct, dsst_errors) VALUES (?, ?, ?, ?, ?) RETURNING *",
+  )
+    .bind(Math.round(b.pvtMedianMs), b.pvtLapses, b.pvtFalseStarts, b.dsstCorrect, b.dsstErrors)
+    .first<BrainCheck>();
+  return c.json({ message: "Brain Check saved", check: row });
+});
+
 // Sets or clears an exercise's sets x reps target, e.g. { name, target: "3x8-12" } or { name, target: "" }.
 app.post("/api/exercises/target", async (c) => {
   const body = (await readJson(c)) as { name?: unknown; target?: unknown };
@@ -324,11 +382,14 @@ app.post("/logout", (c) => {
 
 // Nightly steps sync from an iPhone Shortcuts automation. It sits outside the signed-in area and uses its own token,
 // which can only save step totals: { "steps": 8423 } for today, or add "date": "YYYY-MM-DD" for another day.
-// Accepts the sync key made on the dashboard (stored as a hash) or the STEPS_TOKEN secret.
-app.post("/sync/steps", async (c) => {
+/**
+ * Checks the Shortcut's sync key (made on the dashboard and stored as a hash, or the STEPS_TOKEN secret). Returns an
+ * error response to send back, or null when the key is right. The same key syncs steps and sleep.
+ */
+async function syncKeyError(c: Context<{ Bindings: Env }>): Promise<Response | null> {
   const stored = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'steps_key_sha256'").first<{ value: string }>();
   if (!stored && !c.env.STEPS_TOKEN) {
-    return c.json({ message: "Steps sync isn't set up yet. Create a sync key on the dashboard's Steps card." }, 503);
+    return c.json({ message: "Sync isn't set up yet. Create a sync key on the dashboard's Steps card." }, 503);
   }
   const header = c.req.header("authorization");
   const token = bearerToken(header);
@@ -342,8 +403,15 @@ app.post("/sync/steps", async (c) => {
   const matchesKey = stored ? await safeEqual(await sha256Hex(token), stored.value) : false;
   const matchesSecret = c.env.STEPS_TOKEN ? await safeEqual(token, c.env.STEPS_TOKEN.trim()) : false;
   if (!matchesKey && !matchesSecret) {
-    return c.json({ message: `Wrong steps key (received ${token.length} characters; a dashboard key has 48). Copy it again from the dashboard.` }, 401);
+    return c.json({ message: `Wrong sync key (received ${token.length} characters; a dashboard key has 48). Copy it again from the dashboard.` }, 401);
   }
+  return null;
+}
+
+// Steps for a day: { "steps": 8423 }, optionally with "date": "YYYY-MM-DD" (up to 7 days back).
+app.post("/sync/steps", async (c) => {
+  const denied = await syncKeyError(c);
+  if (denied) return denied;
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const steps = parseSteps(body.steps);
   if (steps === null) return c.json({ message: "Send the day's step count as a number." }, 400);
@@ -368,6 +436,30 @@ app.post("/sync/steps", async (c) => {
       ? `Kept ${saved.toLocaleString("en-GB")} steps for ${day} (this sync sent ${steps.toLocaleString("en-GB")}, lower than already saved).`
       : `Saved ${saved.toLocaleString("en-GB")} steps for ${day}.`;
   return c.json({ message, day, steps: saved });
+});
+
+// Last night's sleep: { "sleep": <hours, minutes or seconds> }, recorded against the morning the night ended (today),
+// or "date": "YYYY-MM-DD" for another night. The higher value is kept, like steps.
+app.post("/sync/sleep", async (c) => {
+  const denied = await syncKeyError(c);
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const minutes = sleepMinutes(body.sleep ?? body.minutes ?? body.hours);
+  if (minutes === null) return c.json({ message: "Send last night's sleep as a number (hours, minutes or seconds)." }, 400);
+  const today = localDay(new Date(), c.env.TIMEZONE);
+  const day = body.date === undefined || body.date === "" ? today : body.date;
+  if (!isIsoDate(day) || day > today || day < addDays(today, -7)) {
+    return c.json({ message: "The date must be YYYY-MM-DD, within the last 7 days." }, 400);
+  }
+  const row = await c.env.DB.prepare(
+    `INSERT INTO sleep (day, minutes) VALUES (?, ?)
+     ON CONFLICT (day) DO UPDATE SET minutes = MAX(minutes, excluded.minutes), synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     RETURNING minutes`,
+  )
+    .bind(day, minutes)
+    .first<{ minutes: number }>();
+  const saved = row?.minutes ?? minutes;
+  return c.json({ message: `Saved ${formatSleep(saved)} of sleep for the night ending ${day}.`, day, minutes: saved });
 });
 
 // Everything below needs a signed-in session.
@@ -450,6 +542,9 @@ app.get("/", async (c) => {
     c.env.DB.prepare("SELECT * FROM body_weight ORDER BY measured_on DESC").all<BodyWeightRow>(),
     c.env.DB.prepare("SELECT day, steps FROM steps WHERE day >= ? ORDER BY day").bind(addDays(today, -STEPS_DAYS)).all<StepsRow>(),
   ]);
+  const brainRounds = await c.env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ?")
+    .bind(new Date(`${addDays(weekStart(today), -1)}T00:00:00Z`).toISOString())
+    .all<{ performed_at: string }>();
   const hasSyncKey = Boolean(await c.env.DB.prepare("SELECT 1 AS ok FROM settings WHERE key = 'steps_key_sha256'").first());
 
   const sets = window.results;
@@ -479,6 +574,7 @@ app.get("/", async (c) => {
           cardioMinutesThisWeek: cardioThisWeek,
           cardioGoalMinutes: cardioGoal(c.env),
           weighedInThisWeek,
+          brainDaysThisWeek: new Set(brainRounds.results.map((r) => localDay(r.performed_at, timeZone)).filter((d) => d >= weekStart(today))).size,
           today,
         }),
       },
@@ -567,6 +663,57 @@ app.get("/recap", async (c) => {
   const asked = c.req.query("week");
   const week = isIsoDate(asked) && asked <= today ? weekStart(asked) : recapWeekFor(today);
   return c.html(recapPage(await loadRecap(c.env, week), today));
+});
+
+// Brain training: Quick Glance speed rounds, the weekly Brain Check and last night's sleep.
+app.get("/brain", async (c) => {
+  const timeZone = c.env.TIMEZONE;
+  const today = localDay(new Date(), timeZone);
+  const since = new Date(`${addDays(today, -61)}T00:00:00Z`).toISOString();
+  const [rounds, checks, sleep] = await Promise.all([
+    c.env.DB.prepare("SELECT * FROM speed_rounds WHERE performed_at >= ? ORDER BY performed_at").bind(since).all<SpeedRound>(),
+    c.env.DB.prepare("SELECT * FROM brain_checks ORDER BY performed_at DESC LIMIT 26").all<BrainCheck>(),
+    c.env.DB.prepare("SELECT day, minutes FROM sleep WHERE day > ? ORDER BY day").bind(addDays(today, -14)).all<SleepRow>(),
+  ]);
+
+  const bestByDay = new Map<string, number>();
+  for (const r of rounds.results) {
+    const day = localDay(r.performed_at, timeZone);
+    const ms = r.best_ms ?? r.final_ms;
+    bestByDay.set(day, Math.min(bestByDay.get(day) ?? Infinity, ms));
+  }
+  const lastRound = rounds.results.at(-1);
+  const checkRows = checks.results.reverse().map((r) => ({
+    day: localDay(r.performed_at, timeZone),
+    pvtMedianMs: r.pvt_median_ms,
+    pvtLapses: r.pvt_lapses,
+    dsstCorrect: r.dsst_correct,
+  }));
+
+  const sleepByDay = new Map(sleep.results.map((r) => [r.day, r.minutes]));
+  const nights = Array.from({ length: 14 }, (_, i) => {
+    const day = addDays(today, i - 13);
+    return { day, minutes: sleepByDay.get(day) ?? null };
+  });
+  const week = nights.slice(-7).flatMap((n) => (n.minutes === null ? [] : [n.minutes]));
+
+  return c.html(
+    brainPage({
+      today,
+      startMs: lastRound?.final_ms ?? 500,
+      roundsToday: rounds.results.filter((r) => localDay(r.performed_at, timeZone) === today).length,
+      streak: dayStreak(bestByDay.keys(), today),
+      daily: [...bestByDay].map(([day, bestMs]) => ({ day, bestMs })),
+      checks: checkRows,
+      checkDue: brainCheckDue(checkRows.at(-1)?.day ?? null, today),
+      sleep: {
+        nights,
+        lastNight: sleepByDay.get(today) ?? null,
+        average7: week.length ? Math.round(week.reduce((a, b) => a + b, 0) / week.length) : null,
+        syncedNights: week.length,
+      },
+    }),
+  );
 });
 
 app.post("/sets/:id/delete", async (c) => {
