@@ -86,7 +86,7 @@ sync, after the steps actions, so one nightly run sends both. It uses the same s
 
 | # | Action | Settings |
 |---|---|---|
-| 4 | **Find Health Samples** | Type **Sleep Analysis**. Filters: **End Date is Today**, **Value is not In Bed**, **Value is not Awake**. |
+| 4 | **Find Health Samples** | Type **Sleep Analysis**. Filters: **End Date is Today**, **Value is not Awake**, and **Value is not In Bed** only if you wear a watch (see below). |
 | 5 | **Get Details of Health Sample** | **Duration** of the *Health Samples* from step 4 |
 | 6 | **Calculate Statistics** | **Sum** of *Duration* |
 | 7 | **Get Contents of URL** | URL `https://gym-tracker.opinion-2nd.workers.dev/sync/sleep`. Method **POST**, the same `Authorization` header as step 3. Request Body **JSON**: a **Number** field `sleep` set to the *Statistics Result* from step 6. |
@@ -94,6 +94,10 @@ sync, after the steps actions, so one nightly run sends both. It uses the same s
 Tap **▶︎** to test: the reply says e.g. "Saved 7 h 24 min of sleep for the night ending 2026-09-26", and the Brain
 page's Sleep card shows it. The tracker works out whether the number is hours, minutes or seconds.
 
+- **No Apple Watch?** Health only has sleep if something records it. In **Health → Browse → Sleep → Full Schedule &
+  Options**, set a sleep schedule (bedtime a little earlier and wake-up a little later than usual), turn on Sleep
+  Focus and **Track Time in Bed with iPhone**. The iPhone then logs time in bed from when you stop using it to when you
+  first pick it up, recorded as *In Bed*, so leave out the **Value is not In Bed** filter.
 - **Far too much sleep?** If both your iPhone and an Apple Watch record sleep, the nights can add up twice. Add the
   filter **Source is** *your Apple Watch* to step 4.
 - Like steps, the higher value for a night is kept, so re-running is safe, and a `date` field works for a missed night.
