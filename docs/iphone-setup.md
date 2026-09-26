@@ -113,3 +113,22 @@ Open **Brain** from the dashboard or the Log screen.
   starts each round where the last one ended. Five days a week ticks **Brain** on the weekly checklist.
 - **Brain Check** (weekly, 3 minutes): a 90-second reaction test and a 90-second symbol match. Do it at a similar time
   each week, ideally before caffeine, and watch the trend over months rather than single scores.
+
+## Reminders (notifications)
+
+The dashboard's **Reminders** page sends iPhone notifications, only when something is still undone:
+
+- **Gym** (default 17:30, Mon–Fri): if you haven't trained that day, your next workout (Push, Pull or Legs), with the
+  never-miss-twice nudge. Tapping it opens the Log on that tab.
+- **Brain training** (default 20:00, every day): if today's 2 Quick Glance rounds aren't done.
+- **Weekly check-in** (default Sunday 10:00): if you haven't weighed in this week, or the Brain Check is due.
+
+To turn them on (iOS 16.4 or later):
+
+1. Open **Arif Gym from its Home Screen icon**. Notifications don't work from a Safari tab.
+2. Dashboard → **Reminders** → **Turn on notifications** → **Allow**.
+3. Tap **Send a test**. A notification should appear within a few seconds.
+
+Change the times and days on the same page and tap **Save reminders**. Times are UK time (`TIMEZONE`) and a reminder
+can arrive up to 15 minutes late. It's skipped if more than 3 hours late. To stop them on a phone, tap **Turn off on
+this phone**, or turn off Arif Gym in **Settings → Notifications**.

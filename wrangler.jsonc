@@ -12,6 +12,8 @@
     // Daily steps goal line on the dashboard's steps chart.
     "STEPS_DAILY_GOAL": "8000"
   },
+  // Reminder notifications: checks every 15 minutes what's due (see /reminders).
+  "triggers": { "crons": ["*/15 * * * *"] },
   "d1_databases": [
     {
       "binding": "DB",

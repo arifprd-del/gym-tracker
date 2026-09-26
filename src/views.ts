@@ -577,6 +577,7 @@ export function dashboardPage(data: DashboardData): Html {
         <div class="row">
           <a class="button primary" href="/log">Log a set</a>
           <a class="button" href="/brain">Brain</a>
+          <a class="button" href="/reminders">Reminders</a>
           <a class="button" href="/export.csv">Export CSV</a>
           <form method="post" action="/logout"><button type="submit">Sign out</button></form>
         </div>

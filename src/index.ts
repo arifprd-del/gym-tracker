@@ -69,6 +69,9 @@ import {
   type StepsRow,
 } from "./lib";
 import { brainPage } from "./brain-page";
+import { isPushEndpoint, loadVapidKeys, sendPush, type PushSubscription } from "./push";
+import { dueRules, isTime, localClock, REMINDER_KEYS, reminderMessage, type ReminderKey, type ReminderRule, type ReminderState } from "./reminders";
+import { remindersPage } from "./reminders-page";
 import { logPage, type ExerciseButton } from "./log-page";
 import { dashboardPage, exercisePage, loginPage, recapPage, stepsKeyPage, summaryPage, type ExerciseRecord } from "./views";
 
@@ -319,6 +322,40 @@ app.post("/api/brain/check", async (c) => {
 });
 
 // Sets or clears an exercise's sets x reps target, e.g. { name, target: "3x8-12" } or { name, target: "" }.
+// Web Push: the phone's subscription from the Reminders page, a test, and turning it off.
+const subscriptionSchema = z.object({
+  endpoint: z.string().max(2000).refine(isPushEndpoint, "Not a push service"),
+  keys: z.object({ p256dh: z.string().min(80).max(120), auth: z.string().min(16).max(40) }),
+});
+app.post("/api/push/subscribe", async (c) => {
+  const parsed = subscriptionSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ error: "This phone's push subscription wasn't accepted." }, 400);
+  const { endpoint, keys } = parsed.data;
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      "INSERT INTO push_subscriptions (endpoint, p256dh, auth) VALUES (?, ?, ?) ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth",
+    ).bind(endpoint, keys.p256dh, keys.auth),
+    // The VAPID "subject" push services may contact: this site's own address.
+    c.env.DB.prepare("INSERT INTO settings (key, value) VALUES ('push_subject', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(new URL(c.req.url).origin),
+  ]);
+  return c.json({ message: "Subscribed" });
+});
+
+app.post("/api/push/unsubscribe", async (c) => {
+  const parsed = z.object({ endpoint: z.string().max(2000) }).safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ error: "Missing endpoint" }, 400);
+  await c.env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").bind(parsed.data.endpoint).run();
+  return c.json({ message: "Unsubscribed" });
+});
+
+app.post("/api/push/test", async (c) => {
+  const r = await pushToAll(c.env, { title: "Arif Gym ✓", body: "Notifications are working. Reminders will look like this.", url: "/reminders", tag: "test" });
+  if (r.phones === 0) return c.json({ message: "No phone is signed up yet. Tap Turn on notifications." });
+  if (r.sent === 0 && r.removed > 0) return c.json({ message: "This phone's sign-up had expired. Tap Turn off, then Turn on notifications again." });
+  if (r.sent === 0) return c.json({ message: `Couldn't send (${r.errors.join("; ")}).` });
+  return c.json({ message: `Sent ✓ It should appear in a few seconds.${r.errors.length ? ` (${r.errors.length} phone failed.)` : ""}` });
+});
+
 // Sleep typed on the Brain page: replaces that night's value (and the sync won't overwrite it); 0 clears the night.
 const sleepEntrySchema = z.object({ day: z.string(), minutes: z.number().int().min(0).max(1440) });
 app.post("/api/brain/sleep", async (c) => {
@@ -382,6 +419,25 @@ app.get("/manifest.webmanifest", (c) =>
     { "content-type": "application/manifest+json" },
   ),
 );
+
+// Service worker for notifications only: it shows pushed reminders and opens the right page when tapped.
+// It has no fetch handler, so pages always load from the network as before.
+const SERVICE_WORKER = `
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data ? event.data.text() : "" }; }
+  event.waitUntil(self.registration.showNotification(data.title || "Arif Gym", { body: data.body || "", tag: data.tag, data: { url: data.url || "/" } }));
+});
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+    for (const w of windows) if ("navigate" in w) return w.focus().then(() => w.navigate(url));
+    return self.clients.openWindow(url);
+  }));
+});
+`;
+app.get("/sw.js", (c) => c.body(SERVICE_WORKER, 200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" }));
 
 app.get("/login", (c) => c.html(loginPage(undefined, safeNextPath(c.req.query("next")))));
 
@@ -790,6 +846,33 @@ app.post("/body-weight/:date/delete", async (c) => {
   return c.redirect("/#body-weight");
 });
 
+// Reminder settings and this phone's notifications.
+app.get("/reminders", async (c) => {
+  const [rules, keys, devices] = await Promise.all([
+    loadReminderRules(c.env.DB),
+    loadVapidKeys(c.env.DB),
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM push_subscriptions").first<{ n: number }>(),
+  ]);
+  return c.html(remindersPage({ rules, publicKey: keys.publicKey, devices: devices?.n ?? 0, saved: c.req.query("saved") === "1" }));
+});
+
+app.post("/reminders", async (c) => {
+  const body = await c.req.parseBody({ all: true });
+  const list = (v: unknown) => (Array.isArray(v) ? v : v === undefined ? [] : [v]).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+  const updates = REMINDER_KEYS.map((key) => {
+    const time = body[`${key}_time`];
+    const days = [...new Set(list(body[`${key}_days`]))].sort();
+    return c.env.DB.prepare("UPDATE reminders SET enabled = ?, time = ?, days = ? WHERE key = ?").bind(
+      body[`${key}_enabled`] ? 1 : 0,
+      isTime(time) ? time : key === "brain" ? "20:00" : key === "gym" ? "17:30" : "10:00",
+      days.join(","),
+      key,
+    );
+  });
+  await c.env.DB.batch(updates);
+  return c.redirect("/reminders?saved=1", 303);
+});
+
 // Everything in one file: sets, cardio and weigh-ins, with a "type" column to filter on in a spreadsheet.
 app.get("/export.csv", async (c) => {
   const [sets, cardio, bodyWeight] = await Promise.all([
@@ -804,4 +887,96 @@ app.get("/export.csv", async (c) => {
   });
 });
 
-export default app;
+// ---------------------------------------------------------------------------------------------------------------------
+// Reminders (cron every 15 minutes, see wrangler.jsonc)
+
+type ReminderRow = { key: ReminderKey; enabled: number; time: string; days: string; last_sent_day: string | null };
+
+async function loadReminderRules(db: D1Database): Promise<ReminderRule[]> {
+  const { results } = await db.prepare("SELECT * FROM reminders").all<ReminderRow>();
+  return results.map((r) => ({
+    key: r.key,
+    enabled: r.enabled === 1,
+    time: r.time,
+    days: r.days ? r.days.split(",").map(Number) : [],
+    lastSentDay: r.last_sent_day,
+  }));
+}
+
+/** Sends one notification to every signed-up phone, removing phones the push service says are gone (404 / 410). */
+async function pushToAll(
+  env: Env,
+  message: { title: string; body: string; url: string; tag: string },
+): Promise<{ phones: number; sent: number; removed: number; errors: string[] }> {
+  const [subs, keys, subject] = await Promise.all([
+    env.DB.prepare("SELECT endpoint, p256dh, auth FROM push_subscriptions").all<PushSubscription>(),
+    loadVapidKeys(env.DB),
+    env.DB.prepare("SELECT value FROM settings WHERE key = 'push_subject'").first<{ value: string }>(),
+  ]);
+  const result = { phones: subs.results.length, sent: 0, removed: 0, errors: [] as string[] };
+  for (const sub of subs.results) {
+    try {
+      const status = await sendPush(sub, message, keys, subject?.value ?? "https://gym-tracker.workers.dev");
+      if (status >= 200 && status < 300) result.sent++;
+      else if (status === 404 || status === 410) {
+        result.removed++;
+        await env.DB.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").bind(sub.endpoint).run();
+      } else result.errors.push(`push service answered ${status}`);
+    } catch (err) {
+      result.errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  if (result.errors.length) console.error("push errors", result.errors);
+  return result;
+}
+
+/** What the reminders check against: today's training, brain rounds, weigh-in and Brain Check. */
+async function loadReminderState(env: Env, today: string): Promise<ReminderState> {
+  const timeZone = env.TIMEZONE;
+  const since = new Date(`${addDays(today, -61)}T00:00:00Z`).toISOString();
+  const thisWeek = weekStart(today);
+  const [sets, cardio, exercises, weighIn, rounds, lastCheck] = await Promise.all([
+    env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ?").bind(since).all<SetRow>(),
+    env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ?").bind(since).all<CardioRow>(),
+    env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
+    env.DB.prepare("SELECT 1 AS ok FROM body_weight WHERE measured_on >= ? AND measured_on <= ?").bind(thisWeek, today).first(),
+    env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ?").bind(since).all<{ performed_at: string }>(),
+    env.DB.prepare("SELECT performed_at FROM brain_checks ORDER BY performed_at DESC LIMIT 1").first<{ performed_at: string }>(),
+  ]);
+  const days = trainingDaysByType(sets.results, dayLookup(exercises.results), timeZone);
+  const activeDays = new Set([...days.keys(), ...cardioMinutesPerDay(cardio.results, timeZone).keys()]);
+  const plan = todaysPlan(days, today);
+  const roundDays = rounds.results.map((r) => localDay(r.performed_at, timeZone));
+  return {
+    today,
+    trainedToday: activeDays.has(today),
+    next: plan.next,
+    lastOfNext: lastTrained(days)[plan.next],
+    nudge: habitNudge({ activeDays, weekStreak: weekStreak(activeDays, today), today, next: plan.next }),
+    roundsToday: roundDays.filter((d) => d === today).length,
+    brainStreak: dayStreak(roundDays, today),
+    weighedInThisWeek: Boolean(weighIn),
+    brainCheckDue: brainCheckDue(lastCheck ? localDay(lastCheck.performed_at, timeZone) : null, today),
+  };
+}
+
+async function runReminders(env: Env, now = new Date()): Promise<void> {
+  const clock = localClock(now, env.TIMEZONE);
+  const due = dueRules(await loadReminderRules(env.DB), clock);
+  if (due.length === 0) return;
+  const hasPhones = await env.DB.prepare("SELECT 1 AS ok FROM push_subscriptions LIMIT 1").first();
+  const state = hasPhones ? await loadReminderState(env, clock.day) : null;
+  for (const rule of due) {
+    // Mark it handled first, so a slow or failed send is never repeated every 15 minutes.
+    await env.DB.prepare("UPDATE reminders SET last_sent_day = ? WHERE key = ?").bind(clock.day, rule.key).run();
+    const message = state && reminderMessage(rule.key, state);
+    if (message) await pushToAll(env, message);
+  }
+}
+
+export default {
+  fetch: app.fetch,
+  scheduled(_controller, env, ctx) {
+    ctx.waitUntil(runReminders(env));
+  },
+} satisfies ExportedHandler<Env>;

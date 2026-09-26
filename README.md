@@ -58,6 +58,10 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
 - **Sleep:** the nightly Shortcut can also post last night's sleep to `/sync/sleep` with the same sync key, or you
   can type a night on the Brain page (a typed night isn't overwritten by the sync). See
   [docs/iphone-setup.md](docs/iphone-setup.md#nightly-sleep-sync).
+- **Reminders (`/reminders`):** iPhone notifications (Web Push) for the gym (your next workout), brain training and a
+  weekly check-in (weigh-in, Brain Check), each with its own time and days, sent only when that thing isn't done yet.
+  A Cloudflare cron runs every 15 minutes; the push keys are made on first use and kept in D1, so there's nothing to
+  configure. Setup: [docs/iphone-setup.md](docs/iphone-setup.md#reminders-notifications).
 - **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and
