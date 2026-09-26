@@ -534,3 +534,32 @@ test("workout summary", async () => {
   assert.equal(empty.sets, 0);
   assert.equal(empty.durationMinutes, null);
 });
+
+test("sets x reps targets and double progression", async () => {
+  const { parseTarget, formatTarget, beatTargets } = await import("./lib");
+  assert.deepEqual(parseTarget("3x8-12"), { sets: 3, repsMin: 8, repsMax: 12 });
+  assert.deepEqual(parseTarget(" 4 × 5 "), { sets: 4, repsMin: 5, repsMax: 5 });
+  assert.deepEqual(parseTarget("3X6–10"), { sets: 3, repsMin: 6, repsMax: 10 });
+  assert.equal(parseTarget(""), null);
+  assert.equal(parseTarget("three sets"), undefined);
+  assert.equal(parseTarget("3x12-8"), undefined);
+  assert.equal(parseTarget("0x5"), undefined);
+  assert.equal(formatTarget({ sets: 3, repsMin: 8, repsMax: 12 }), "3 × 8–12");
+  assert.equal(formatTarget({ sets: 5, repsMin: 5, repsMax: 5 }), "5 × 5");
+
+  // Below the top of the range: one more rep first.
+  assert.deepEqual(beatTargets({ weight: 80, reps: 6 }, { repsMin: 5, repsMax: 8 }), [
+    { weight: 80, reps: 7 },
+    { weight: 82.5, reps: 6 },
+  ]);
+  // At the top of the range: heavier at the bottom of the range first.
+  assert.deepEqual(beatTargets({ weight: 80, reps: 8 }, { repsMin: 5, repsMax: 8 }), [
+    { weight: 82.5, reps: 5 },
+    { weight: 80, reps: 9 },
+  ]);
+  // No target: unchanged behaviour.
+  assert.deepEqual(beatTargets({ weight: 80, reps: 8 }), [
+    { weight: 80, reps: 9 },
+    { weight: 82.5, reps: 8 },
+  ]);
+});

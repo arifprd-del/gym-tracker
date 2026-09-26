@@ -35,6 +35,10 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   step totals; a `STEPS_TOKEN` secret also works). The dashboard shows today or yesterday, the 7-day average, this
   week's total and a 30-day chart with a goal line (`STEPS_DAILY_GOAL`, default 8,000). Setup is in
   [docs/iphone-setup.md](docs/iphone-setup.md#nightly-steps-sync).
+- **Sets × reps targets:** each exercise button has a target (starting at 3 × 5–8 for big lifts, 3 × 6–10 for
+  pull-ups and dips, 3 × 8–12 for the rest), shown on the button with today's progress (2/3, then ✓ 3/3) and as
+  "set 2 of 3" in the panel. **Edit list → tap an exercise** changes it (e.g. `4x6-10`, empty for none). Beat-last-time
+  uses double progression: +1 rep until the top of the range, then more weight at the bottom of it.
 - **Exercise progress (`/exercise/<name>`):** tap an exercise name on the dashboard, or **📈 Progress** on the log
   screen, to see the best set, best estimated 1RM, the change over about 8 weeks, a strength-over-time chart (best reps
   for bodyweight moves) and every session's sets, with 🏆 on record days.

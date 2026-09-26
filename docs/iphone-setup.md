@@ -28,7 +28,8 @@ Tap **Weigh-in** at the top of the log screen (or scroll to **Body weight** on t
 
 ## Changing your exercises
 
-Use **+ Add exercise** at the end of a tab to add one, or **Edit list** to remove one (your logged sets are kept). An
+Use **+ Add exercise** at the end of a tab to add one. Tap **Edit list**, then an exercise, to change its sets × reps
+target (e.g. `3x8-12`, or leave it empty for none) or type `remove` to take it off the list (your logged sets are kept). An
 exercise's tab also sets its colour on the dashboard: blue for Push, orange for Pull, green for Legs.
 
 ## Optional: open it when you arrive at the gym

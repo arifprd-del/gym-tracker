@@ -358,12 +358,20 @@ export function beats(set: { weight: number; reps: number }, previous: { weight:
   return set.weight > previous.weight || (set.weight === previous.weight && set.reps > previous.reps);
 }
 
-/** One-tap targets for beating last time: one more rep, or a small jump in weight at the same reps. */
-export function beatTargets(previous: { weight: number; reps: number }): { weight: number; reps: number }[] {
+/**
+ * One-tap targets for beating last time: one more rep, or a small jump in weight at the same reps. With a rep-range
+ * target (double progression), reaching the top of the range suggests the heavier weight at the bottom of the range
+ * first, and one more rep is only offered while below the top.
+ */
+export function beatTargets(
+  previous: { weight: number; reps: number },
+  target?: { repsMin: number; repsMax: number } | null,
+): { weight: number; reps: number }[] {
   const moreReps = { weight: previous.weight, reps: previous.reps + 1 };
   if (previous.weight === 0) return [moreReps];
-  const step = previous.weight >= 20 ? 2.5 : 1;
-  return [moreReps, { weight: Math.round((previous.weight + step) * 10) / 10, reps: previous.reps }];
+  const heavier = Math.round((previous.weight + (previous.weight >= 20 ? 2.5 : 1)) * 10) / 10;
+  if (target && previous.reps >= target.repsMax) return [{ weight: heavier, reps: target.repsMin }, moreReps];
+  return [moreReps, { weight: heavier, reps: previous.reps }];
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -765,4 +773,27 @@ export function workoutSummary(input: {
     cardioMinutes: todayCardio.reduce((sum, c) => sum + c.minutes, 0),
     next: todaysPlan(days, day).next,
   };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Sets x reps targets
+
+export type Target = { sets: number; repsMin: number; repsMax: number };
+
+/** "3x8-12", "3 × 8–12", "4x5" -> a target; "" -> null (no target); anything else -> undefined (invalid). */
+export function parseTarget(text: string): Target | null | undefined {
+  const t = text.trim();
+  if (t === "") return null;
+  const m = /^(\d{1,2})\s*[x×*]\s*(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?$/i.exec(t);
+  if (!m) return undefined;
+  const sets = Number(m[1]);
+  const repsMin = Number(m[2]);
+  const repsMax = m[3] ? Number(m[3]) : repsMin;
+  if (sets < 1 || sets > 10 || repsMin < 1 || repsMax > 100 || repsMax < repsMin) return undefined;
+  return { sets, repsMin, repsMax };
+}
+
+/** 3 x 8-12 -> "3 × 8–12", 4 x 5 -> "4 × 5". */
+export function formatTarget(t: Target): string {
+  return `${t.sets} × ${t.repsMin === t.repsMax ? t.repsMin : `${t.repsMin}–${t.repsMax}`}`;
 }

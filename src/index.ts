@@ -33,6 +33,9 @@ import {
   recapWeekFor,
   weekRecap,
   workoutSummary,
+  parseTarget,
+  formatTarget,
+  type Target,
   type WeekRecap,
   stepsSummary,
   lastSessionBest,
@@ -130,6 +133,21 @@ async function loadRecap(env: Env, week: string): Promise<WeekRecap> {
     cardioGoal: cardioGoal(env),
     stepsGoal: stepsGoal(env),
   });
+}
+
+type ExerciseRow = { name: string; day: SplitDayName; target_sets: number | null; target_reps_min: number | null; target_reps_max: number | null };
+type SplitDayName = "push" | "pull" | "legs";
+
+/** Exercise buttons with their sets x reps targets. */
+async function loadExercises(db: D1Database): Promise<ExerciseButton[]> {
+  const { results } = await db
+    .prepare("SELECT name, day, target_sets, target_reps_min, target_reps_max FROM exercises ORDER BY day, position, name")
+    .all<ExerciseRow>();
+  return results.map((r) => ({
+    name: r.name,
+    day: r.day,
+    target: r.target_sets && r.target_reps_min && r.target_reps_max ? { sets: r.target_sets, repsMin: r.target_reps_min, repsMax: r.target_reps_max } : null,
+  }));
 }
 
 async function setSessionCookie(c: Context<{ Bindings: Env }>) {
@@ -240,6 +258,22 @@ app.post("/api/exercises", async (c) => {
     .bind(name, parsed.data.day)
     .run();
   return c.json({ message: `Added ${displayName(name)}`, exercise: { name, day: parsed.data.day } });
+});
+
+// Sets or clears an exercise's sets x reps target, e.g. { name, target: "3x8-12" } or { name, target: "" }.
+app.post("/api/exercises/target", async (c) => {
+  const body = (await readJson(c)) as { name?: unknown; target?: unknown };
+  if (typeof body.name !== "string" || typeof body.target !== "string") return c.json({ message: "Enter a target like 3x8-12." }, 400);
+  const target = parseTarget(body.target);
+  if (target === undefined) return c.json({ message: "Use sets x reps, like 3x8-12 or 5x5." }, 400);
+  const name = normalizeExercise(body.name);
+  const result = await c.env.DB.prepare(
+    "UPDATE exercises SET target_sets = ?, target_reps_min = ?, target_reps_max = ? WHERE name = ?",
+  )
+    .bind(target?.sets ?? null, target?.repsMin ?? null, target?.repsMax ?? null, name)
+    .run();
+  if (!result.meta.changes) return c.json({ message: "That exercise isn't in your list." }, 404);
+  return c.json({ message: target ? `${displayName(name)}: ${formatTarget(target)}` : `Removed the target for ${displayName(name)}`, target });
 });
 
 // Removes an exercise button. Logged sets for it are kept.
@@ -354,7 +388,7 @@ app.get("/log", async (c) => {
   const timeZone = c.env.TIMEZONE;
   const historySince = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
   const [buttons, lastSets, today, lastCardio, cardio, history] = await Promise.all([
-    c.env.DB.prepare("SELECT name, day FROM exercises ORDER BY day, position, name").all<ExerciseButton>(),
+    loadExercises(c.env.DB),
     c.env.DB.prepare(
       "SELECT s.* FROM sets s JOIN (SELECT MAX(id) AS id FROM sets GROUP BY exercise) latest ON s.id = latest.id",
     ).all<SetRow>(),
@@ -366,18 +400,21 @@ app.get("/log", async (c) => {
     c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ?").bind(historySince).all<SetRow>(),
   ]);
   const todayDate = localDay(new Date(), timeZone);
-  const trained = trainingDaysByType(history.results, dayLookup(buttons.results), timeZone);
+  const trained = trainingDaysByType(history.results, dayLookup(buttons), timeZone);
   const plan = todaysPlan(trained, todayDate);
   return c.html(
     logPage({
-      exercises: buttons.results,
+      exercises: buttons,
       last: Object.fromEntries(lastSets.results.map((s) => [s.exercise, { weight: s.weight_kg, reps: s.reps }])),
       today: today.map((s) => ({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at })),
       plan: plan.next,
       doneToday: plan.doneToday,
       stalls: Object.fromEntries(stallsByExercise(history.results, timeZone, todayDate)),
       previous: Object.fromEntries(
-        [...lastSessionBest(history.results, timeZone, todayDate)].map(([name, best]) => [name, { ...best, targets: beatTargets(best) }]),
+        [...lastSessionBest(history.results, timeZone, todayDate)].map(([name, best]) => [
+          name,
+          { ...best, targets: beatTargets(best, buttons.find((b) => b.name === name)?.target) },
+        ]),
       ),
       cardio: {
         last: Object.fromEntries(lastCardio.results.map((r) => [r.activity, { minutes: r.minutes, distance: r.distance_km }])),
@@ -512,14 +549,16 @@ app.get("/summary", async (c) => {
   const asked = c.req.query("day");
   const day = isIsoDate(asked) && asked <= today ? asked : today;
   const utc = (d: string) => new Date(`${d}T00:00:00Z`).toISOString();
-  const [sets, cardio, exercises] = await Promise.all([
+  const [sets, cardio, exercises, buttons] = await Promise.all([
     // A year of history for "vs last time" and records; a day of margin covers time zones.
     c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ? AND performed_at < ?").bind(utc(addDays(day, -366)), utc(addDays(day, 2))).all<SetRow>(),
     c.env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ? AND performed_at < ?").bind(utc(addDays(day, -1)), utc(addDays(day, 2))).all<CardioRow>(),
     c.env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
+    loadExercises(c.env.DB),
   ]);
+  const targets = Object.fromEntries(buttons.map((b) => [b.name, b.target]));
   const summary = workoutSummary({ day, sets: sets.results, cardio: cardio.results, dayOf: dayLookup(exercises.results), timeZone: c.env.TIMEZONE });
-  return c.html(summaryPage(summary, today));
+  return c.html(summaryPage(summary, today, targets));
 });
 
 // Weekly recap: ?week=YYYY-MM-DD (any day in the week); defaults to the same week as the dashboard card.

@@ -18,6 +18,8 @@ import {
   type Stall,
   type WeekRecap,
   type WorkoutSummary,
+  type Target,
+  formatTarget,
   type DaySummary,
   type SetRow,
   type SplitDay,
@@ -914,7 +916,7 @@ export function recapPage(r: WeekRecap, today: string): Html {
 
 const TREND_LABEL = { up: "↑ better", same: "= same", down: "↓ lower", new: "new" } as const;
 
-export function summaryPage(s: WorkoutSummary, today: string): Html {
+export function summaryPage(s: WorkoutSummary, today: string, targets: Record<string, Target | null | undefined> = {}): Html {
   const isToday = s.day === today;
   const typeLabel = s.main ? DAY_LABELS[s.main] : null;
   const headline =
@@ -968,7 +970,12 @@ export function summaryPage(s: WorkoutSummary, today: string): Html {
               ${s.exercises.map(
                 (e) => html`<tr>
                   <td><a class="plain" href="${exerciseHref(e.exercise)}"><b>${displayName(e.exercise)}</b></a>${e.record ? " 🏆" : ""}</td>
-                  <td class="sets">${e.sets.map((x) => (x.weight > 0 ? `${formatKg(x.weight)}×${x.reps}` : `${x.reps}`)).join(", ")}</td>
+                  <td class="sets">
+                    ${e.sets.map((x) => (x.weight > 0 ? `${formatKg(x.weight)}×${x.reps}` : `${x.reps}`)).join(", ")}
+                    ${targets[e.exercise]
+                      ? html`<br /><span style="font-size: 12px">target ${formatTarget(targets[e.exercise]!)} · ${e.sets.length}/${targets[e.exercise]!.sets}${e.sets.length >= targets[e.exercise]!.sets ? " ✓" : ""}</span>`
+                      : ""}
+                  </td>
                   <td class="num">
                     <span class="trend ${e.trend}">${TREND_LABEL[e.trend]}</span>
                     ${e.previous ? html`<br /><span class="muted" style="font-size: 12px">last ${formatLoad({ weight_kg: e.previous.weight, reps: e.previous.reps })}</span>` : ""}

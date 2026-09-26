@@ -1,11 +1,11 @@
 import { html, raw } from "hono/html";
-import type { SplitDay, Stall } from "./lib";
+import type { SplitDay, Stall, Target } from "./lib";
 import { layout } from "./views";
 
 // Touch-first logging screen: pick a day, tap an exercise, adjust weight and reps, tap "Log set".
 // The page is rendered once with its data and then talks to /api/* using the signed-in session.
 
-export type ExerciseButton = { name: string; day: "push" | "pull" | "legs" };
+export type ExerciseButton = { name: string; day: "push" | "pull" | "legs"; target?: Target | null };
 
 export type LogPageData = {
   exercises: ExerciseButton[];
@@ -54,6 +54,11 @@ main.log { padding-bottom: 385px; gap: 14px; }
 .panel-inner { max-width: 960px; margin: 0 auto; display: grid; gap: 10px; }
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-height: 22px; }
 .panel-head b { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-title { display: grid; min-width: 0; }
+.target-info { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile .badge.done { color: var(--good); }
+.tile .target { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.tile.has-badge .name { padding-right: 44px; }
 .progress-link { font-size: 14px; color: var(--accent); text-decoration: none; white-space: nowrap; margin-right: auto; }
 .rest { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-height: 34px; font-size: 14px; color: var(--muted); }
@@ -103,7 +108,7 @@ const $ = (id) => document.getElementById(id);
 const els = { tabs: $("tabs"), grid: $("grid"), today: $("today"), todayCard: $("today-card"), selected: $("selected"),
   rest: $("rest"), weight: $("weight"), reps: $("reps"), log: $("log"), toast: $("toast"), toastText: $("toast-text"),
   undo: $("undo"), edit: $("edit"), liftSteppers: $("lift-steppers"), cardioSteppers: $("cardio-steppers"),
-  minutes: $("minutes"), distance: $("distance"), hint: $("hint"), planHint: $("plan-hint"), progress: $("progress-link") };
+  minutes: $("minutes"), distance: $("distance"), hint: $("hint"), planHint: $("plan-hint"), progress: $("progress-link"), targetInfo: $("target-info") };
 const state = { tab: "push", selected: null, cardioSelected: null, extraActivities: [], editing: false, restFrom: null, lastLogged: null };
 
 const title = (n) => n.replace(/(^|\\s)(\\S)/g, (m, s, c) => s + c.toUpperCase());
@@ -136,6 +141,8 @@ function activities() {
   return [...new Set([...DEFAULT_ACTIVITIES, ...Object.keys(data.cardio.last), ...state.extraActivities])];
 }
 const isCardio = () => state.tab === "cardio";
+const targetOf = (name) => (data.exercises.find((e) => e.name === name) || {}).target || null;
+const fmtTarget = (t) => t.sets + " × " + (t.repsMin === t.repsMax ? t.repsMin : t.repsMin + "–" + t.repsMax);
 
 function el(tag, props, children) {
   const node = Object.assign(document.createElement(tag), props || {});
@@ -200,10 +207,15 @@ function renderGrid() {
       el("span", { className: "name", textContent: title(name) }),
       el("span", { className: "meta", textContent: last ? "Last " + load(last.weight, last.reps) : "New" }),
     ]);
-    if (state.editing) b.append(el("span", { className: "badge", textContent: "Remove" }));
+    const target = targetOf(name);
+    if (state.editing) b.append(el("span", { className: "badge", textContent: "Edit" }));
+    else if (target && count >= target.sets) b.append(el("span", { className: "badge done", textContent: "✓ " + count + "/" + target.sets }));
+    else if (target && count) b.append(el("span", { className: "badge", textContent: count + "/" + target.sets }));
     else if (count) b.append(el("span", { className: "badge", textContent: "×" + count }));
+    if (target && !state.editing) b.append(el("span", { className: "target", textContent: "Target " + fmtTarget(target) }));
+    if (b.querySelector(".badge")) b.classList.add("has-badge");
     b.setAttribute("aria-pressed", String(!state.editing && name === state.selected));
-    b.onclick = () => (state.editing ? removeExercise(name) : select(name));
+    b.onclick = () => (state.editing ? editExercise(name) : select(name));
     return b;
   });
   if (state.tab !== "other") {
@@ -303,6 +315,12 @@ function renderPanel() {
   els.liftSteppers.hidden = cardio;
   els.cardioSteppers.hidden = !cardio;
   els.selected.textContent = selected ? title(selected) : cardio ? "Pick an activity" : "Tap an exercise";
+  const target = !cardio && selected ? targetOf(selected) : null;
+  if (target) {
+    const done = setsToday(selected);
+    els.targetInfo.textContent = fmtTarget(target) + " · " + (done >= target.sets ? "done ✓" : "set " + (done + 1) + " of " + target.sets);
+  }
+  els.targetInfo.hidden = !target;
   els.progress.hidden = cardio || !selected;
   if (!cardio && selected) els.progress.href = "/exercise/" + encodeURIComponent(selected);
   els.log.textContent = cardio ? "Log cardio" : "Log set";
@@ -458,6 +476,26 @@ async function addExercise() {
   }
 }
 
+// Edit mode: set the sets x reps target, or remove the exercise from the list.
+async function editExercise(name) {
+  const current = targetOf(name);
+  const answer = prompt(
+    title(name) + ": target as sets x reps (e.g. 3x8-12 or 5x5). Leave empty for no target, or type remove to take it off the list.",
+    current ? current.sets + "x" + (current.repsMin === current.repsMax ? current.repsMin : current.repsMin + "-" + current.repsMax) : "",
+  );
+  if (answer === null) return;
+  if (answer.trim().toLowerCase() === "remove") return removeExercise(name);
+  try {
+    const result = await api("/api/exercises/target", { name, target: answer });
+    const entry = data.exercises.find((e) => e.name === name);
+    if (entry) entry.target = result.target;
+    toast(result.message);
+    render();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
 async function removeExercise(name) {
   if (!confirm("Remove " + title(name) + " from " + LABELS[state.tab] + "? Sets you've logged are kept.")) return;
   try {
@@ -510,7 +548,7 @@ export function logPage(data: LogPageData) {
 
       <div class="panel">
         <div class="panel-inner">
-          <div class="panel-head"><b id="selected">Tap an exercise</b><a class="progress-link" id="progress-link" hidden>📈 Progress</a><span class="rest" id="rest"></span></div>
+          <div class="panel-head"><span class="panel-title"><b id="selected">Tap an exercise</b><span class="target-info" id="target-info" hidden></span></span><a class="progress-link" id="progress-link" hidden>📈 Progress</a><span class="rest" id="rest"></span></div>
           <div class="hint" id="hint" aria-live="polite"></div>
           <div class="steppers" id="lift-steppers">
             <div class="stepper">
