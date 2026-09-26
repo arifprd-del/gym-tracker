@@ -62,7 +62,14 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   weekly check-in (weigh-in, Brain Check), each with its own time and days, sent only when that thing isn't done yet.
   A Cloudflare cron runs every 15 minutes; the push keys are made on first use and kept in D1, so there's nothing to
   configure. Setup: [docs/iphone-setup.md](docs/iphone-setup.md#reminders-notifications).
-- **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
+- **Protein:** a dashboard card (also **Protein** on the Log screen) with +10 / +20 / +30 / +40 g buttons, your own
+  amount and undo. The daily target is 1.6 g per kg of your latest weigh-in (`PROTEIN_G_PER_KG` in `wrangler.jsonc`),
+  with a 14-day chart; the recap shows the week's average and days at target.
+- **Sleep and performance (Brain page):** compares days after nights under 7 hours with days after 7+ hours for Quick
+  Glance speed, lifting strength (best estimated 1RM against each exercise's previous sessions), reaction time and
+  symbol matching. Each measure is taken against your own recent level, and it needs 3 days of each kind of night
+  before it shows a pattern.
+- **CSV export:** one file with every set, cardio session, weigh-in and protein entry (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and
 accept only JSON.

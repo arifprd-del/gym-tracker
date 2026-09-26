@@ -10,7 +10,9 @@
     // Weekly cardio goal on the dashboard checklist.
     "CARDIO_WEEKLY_MINUTES": "90",
     // Daily steps goal line on the dashboard's steps chart.
-    "STEPS_DAILY_GOAL": "8000"
+    "STEPS_DAILY_GOAL": "8000",
+    // Daily protein target: grams per kg of your latest weigh-in.
+    "PROTEIN_G_PER_KG": "1.6"
   },
   // Reminder notifications: checks every 15 minutes what's due (see /reminders).
   "triggers": { "crons": ["*/15 * * * *"] },

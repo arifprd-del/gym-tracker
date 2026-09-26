@@ -1,4 +1,5 @@
 import { html, raw } from "hono/html";
+import { MIN_DAYS_EACH, type SleepComparison } from "./insights";
 import { formatSleep } from "./lib";
 import { layout } from "./views";
 
@@ -16,6 +17,7 @@ export type BrainPageData = {
   daily: { day: string; bestMs: number }[]; // best flash per day with a completed round
   checks: { day: string; pvtMedianMs: number; pvtLapses: number; dsstCorrect: number }[];
   checkDue: boolean;
+  insights: SleepComparison[];
   sleep: { nights: { day: string; minutes: number | null; typed: boolean }[]; lastNight: number | null; average7: number | null; syncedNights: number };
 };
 
@@ -28,6 +30,11 @@ const styles = `
 .sleep-form label:first-child select { width: 100%; max-width: 260px; }
 .sleep-form input { width: 64px; font-size: 17px; }
 .sleep-form select { font: inherit; font-size: 16px; padding: 10px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.insights { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.insights li { display: grid; gap: 2px; }
+.insights .muted { font-size: 13px; }
+.insights .worse { color: var(--danger); font-weight: 600; }
+.insights .better { color: var(--good); font-weight: 600; }
 .chip-due { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--nudge-bg); font-size: 13px; font-weight: 600; }
 .qg-stage { position: relative; width: 100%; max-width: 380px; margin: 0 auto; aspect-ratio: 1; background: var(--bg); border-radius: 50%; border: 1px solid var(--line); }
 .qg-slot { position: absolute; width: 18%; aspect-ratio: 1; transform: translate(-50%, -50%); display: grid; place-items: center;
@@ -93,6 +100,31 @@ function lineChart(points: { day: string; value: number }[], opts: { label: stri
     ${points.length > 1 ? html`<text x="${W - R}" y="${H - 5}" text-anchor="end">${shortDate(points[points.length - 1].day)}</text>` : ""}
   </svg>
   <p class="muted" style="margin: 4px 0 0; font-size: 13px">${opts.label} (${opts.unit}), ${opts.better} is better.</p>`;
+}
+
+function insightsCard(list: SleepComparison[]): Html {
+  const collecting = (n: number) => (n >= MIN_DAYS_EACH ? `${n} ✓` : `${n} of ${MIN_DAYS_EACH}`);
+  return html`<section class="card" id="insights" style="display: grid; gap: 10px">
+    <h2 style="margin: 0">Sleep and performance</h2>
+    ${list.every((c) => !c.ready)
+      ? html`<p style="margin: 0">Collecting data. Each measure needs ${MIN_DAYS_EACH} days after nights under 7 h and ${MIN_DAYS_EACH} after
+          7 h+ nights, with sleep recorded, before it shows a pattern. Usually 2–4 weeks for Quick Glance and lifting.</p>`
+      : ""}
+    <ul class="insights">
+      ${list.map((c) => {
+        const tone = c.diffPct === null || Math.round(Math.abs(c.diffPct)) < 2 ? "" : c.diffPct > 0 ? "worse" : "better";
+        return html`<li>
+          <b>${c.label}</b>
+          ${c.ready
+            ? html`<span class="${tone}">${c.sentence}</span>
+                <span class="muted">${c.short.n} days after short nights, ${c.good.n} after 7 h+.</span>`
+            : html`<span class="muted">Short nights: ${collecting(c.short.n)} · 7 h+ nights: ${collecting(c.good.n)}</span>`}
+        </li>`;
+      })}
+    </ul>
+    <p class="muted" style="margin: 0; font-size: 13px">Each score is compared with your own level over the days before, so getting better
+      with practice doesn't count as a sleep effect. These are patterns, not proof: caffeine, stress and time of day matter too.</p>
+  </section>`;
 }
 
 function sleepChart(nights: BrainPageData["sleep"]["nights"]): Html {
@@ -439,6 +471,8 @@ export function brainPage(d: BrainPageData): Html {
         </form>
         <p class="muted" id="sleep-msg" style="margin: 0; font-size: 13px">Typing a night replaces what the phone sent, and the nightly sync won't change it. 0 hours clears it.</p>
       </section>
+
+      ${insightsCard(d.insights)}
     </main>
     <script id="brain-data" type="application/json">${raw(json)}</script>
     <script>${raw(script)}</script>`,

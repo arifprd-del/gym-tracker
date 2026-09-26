@@ -49,6 +49,10 @@ import {
   todaysPlan,
   weeklyChecklist,
   BRAIN_DAYS_GOAL,
+  PROTEIN_FALLBACK_G,
+  proteinByDay,
+  proteinTarget,
+  type ProteinRow,
   dayLookup,
   displayName,
   formatLoad,
@@ -69,6 +73,7 @@ import {
   type StepsRow,
 } from "./lib";
 import { brainPage } from "./brain-page";
+import { sleepInsights } from "./insights";
 import { isPushEndpoint, loadVapidKeys, sendPush, type PushSubscription } from "./push";
 import { dueRules, isTime, localClock, REMINDER_KEYS, reminderMessage, type ReminderKey, type ReminderRule, type ReminderState } from "./reminders";
 import { remindersPage } from "./reminders-page";
@@ -80,6 +85,8 @@ type Env = {
   DASHBOARD_PASSWORD: string;
   TIMEZONE: string;
   CARDIO_WEEKLY_MINUTES?: string;
+  /** Protein target in grams per kg of body weight (default 1.6). */
+  PROTEIN_G_PER_KG?: string;
   STEPS_DAILY_GOAL?: string;
   /** Token the nightly iPhone Shortcuts automation sends to /sync/steps. It can only write step totals. */
   STEPS_TOKEN?: string;
@@ -88,6 +95,11 @@ type Env = {
 function stepsGoal(env: Env): number {
   const goal = Number(env.STEPS_DAILY_GOAL);
   return Number.isFinite(goal) && goal > 0 ? goal : 8000;
+}
+
+function proteinPerKg(env: Env): number {
+  const perKg = Number(env.PROTEIN_G_PER_KG);
+  return Number.isFinite(perKg) && perKg > 0 ? perKg : 1.6;
 }
 
 function cardioGoal(env: Env): number {
@@ -134,10 +146,14 @@ async function loadRecap(env: Env, week: string): Promise<WeekRecap> {
     env.DB.prepare("SELECT day, steps FROM steps WHERE day >= ? AND day <= ?").bind(week, addDays(week, 6)).all<StepsRow>(),
     env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
   ]);
-  const [rounds, sleep] = await Promise.all([
+  const [rounds, sleep, protein] = await Promise.all([
     env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ? AND performed_at < ?").bind(utc(addDays(week, -1)), to).all<{ performed_at: string }>(),
     env.DB.prepare("SELECT day, minutes FROM sleep WHERE day >= ? AND day <= ?").bind(week, addDays(week, 6)).all<SleepRow>(),
+    env.DB.prepare("SELECT * FROM protein WHERE logged_at >= ? AND logged_at < ?").bind(utc(addDays(week, -1)), to).all<ProteinRow>(),
   ]);
+  const proteinDays = [...proteinByDay(protein.results, env.TIMEZONE)].filter(([d]) => d >= week && d <= addDays(week, 6)).map(([, g]) => g);
+  const latestWeight = [...bodyWeight.results].sort((a, b) => b.measured_on.localeCompare(a.measured_on))[0];
+  const weekProteinTarget = proteinTarget(latestWeight?.weight_kg, proteinPerKg(env));
   const brainDays = new Set(rounds.results.map((r) => localDay(r.performed_at, env.TIMEZONE)).filter((d) => d >= week && d <= addDays(week, 6))).size;
   const sleepTotal = sleep.results.reduce((sum, r) => sum + r.minutes, 0);
   const recap = weekRecap({
@@ -156,6 +172,12 @@ async function loadRecap(env: Env, week: string): Promise<WeekRecap> {
     complete: recap.complete && brainDays >= BRAIN_DAYS_GOAL,
     brain: { days: brainDays, goal: BRAIN_DAYS_GOAL },
     sleep: { averageMinutes: sleep.results.length ? Math.round(sleepTotal / sleep.results.length) : null, nights: sleep.results.length },
+    protein: {
+      averageG: proteinDays.length ? Math.round(proteinDays.reduce((a, b) => a + b, 0) / proteinDays.length) : null,
+      daysLogged: proteinDays.length,
+      daysAtTarget: proteinDays.filter((g) => g >= (weekProteinTarget ?? PROTEIN_FALLBACK_G)).length,
+      target: weekProteinTarget,
+    },
   };
 }
 
@@ -354,6 +376,46 @@ app.post("/api/push/test", async (c) => {
   if (r.sent === 0 && r.removed > 0) return c.json({ message: "This phone's sign-up had expired. Tap Turn off, then Turn on notifications again." });
   if (r.sent === 0) return c.json({ message: `Couldn't send (${r.errors.join("; ")}).` });
   return c.json({ message: `Sent ✓ It should appear in a few seconds.${r.errors.length ? ` (${r.errors.length} phone failed.)` : ""}` });
+});
+
+// Protein: taps on the dashboard's Protein card, and undo of today's last one.
+const PROTEIN_DAYS = 14;
+
+function proteinData(rows: ProteinRow[], weightKg: number | null, perKg: number, today: string, timeZone: string) {
+  const byDay = proteinByDay(rows, timeZone);
+  const todays = rows.filter((r) => localDay(r.logged_at, timeZone) === today);
+  const last = todays.at(-1);
+  return {
+    today: byDay.get(today) ?? 0,
+    target: proteinTarget(weightKg, perKg),
+    fallback: PROTEIN_FALLBACK_G,
+    perKg,
+    weightKg,
+    last: last
+      ? { grams: last.grams, time: new Date(last.logged_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }) }
+      : null,
+    daily: Array.from({ length: PROTEIN_DAYS }, (_, i) => {
+      const day = addDays(today, i - PROTEIN_DAYS + 1);
+      return { day, grams: byDay.get(day) ?? 0 };
+    }),
+  };
+}
+
+app.post("/api/protein", async (c) => {
+  const parsed = z.object({ grams: z.number().int().min(1).max(300) }).safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ error: "Enter 1 to 300 grams." }, 400);
+  await c.env.DB.prepare("INSERT INTO protein (grams) VALUES (?)").bind(parsed.data.grams).run();
+  return c.json({ message: `Added ${parsed.data.grams} g` });
+});
+
+app.post("/api/protein/undo", async (c) => {
+  const today = localDay(new Date(), c.env.TIMEZONE);
+  const since = new Date(`${addDays(today, -1)}T00:00:00Z`).toISOString();
+  const { results } = await c.env.DB.prepare("SELECT * FROM protein WHERE logged_at >= ? ORDER BY logged_at DESC LIMIT 5").bind(since).all<ProteinRow>();
+  const last = results.find((r) => localDay(r.logged_at, c.env.TIMEZONE) === today);
+  if (!last) return c.json({ error: "Nothing logged today." }, 404);
+  await c.env.DB.prepare("DELETE FROM protein WHERE id = ?").bind(last.id).run();
+  return c.json({ message: `Removed ${last.grams} g` });
 });
 
 // Sleep typed on the Brain page: replaces that night's value (and the sync won't overwrite it); 0 clears the night.
@@ -628,6 +690,9 @@ app.get("/", async (c) => {
     c.env.DB.prepare("SELECT * FROM body_weight ORDER BY measured_on DESC").all<BodyWeightRow>(),
     c.env.DB.prepare("SELECT day, steps FROM steps WHERE day >= ? ORDER BY day").bind(addDays(today, -STEPS_DAYS)).all<StepsRow>(),
   ]);
+  const proteinRows = await c.env.DB.prepare("SELECT * FROM protein WHERE logged_at >= ? ORDER BY logged_at")
+    .bind(new Date(`${addDays(today, -PROTEIN_DAYS - 1)}T00:00:00Z`).toISOString())
+    .all<ProteinRow>();
   const brainRounds = await c.env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ?")
     .bind(new Date(`${addDays(weekStart(today), -1)}T00:00:00Z`).toISOString())
     .all<{ performed_at: string }>();
@@ -685,6 +750,7 @@ app.get("/", async (c) => {
         goal: stepsGoal(c.env),
         hasSyncKey,
       },
+      protein: proteinData(proteinRows.results, bodyWeight.results[0]?.weight_kg ?? null, proteinPerKg(c.env), today, timeZone),
       bodyWeight: {
         weekly: weeklyBodyWeight(bodyWeight.results, BODY_WEIGHT_WEEKS, today),
         trend: bodyWeightTrend(bodyWeight.results),
@@ -751,15 +817,19 @@ app.get("/recap", async (c) => {
   return c.html(recapPage(await loadRecap(c.env, week), today));
 });
 
+const INSIGHT_DAYS = 180;
+
 // Brain training: Quick Glance speed rounds, the weekly Brain Check and last night's sleep.
 app.get("/brain", async (c) => {
   const timeZone = c.env.TIMEZONE;
   const today = localDay(new Date(), timeZone);
-  const since = new Date(`${addDays(today, -61)}T00:00:00Z`).toISOString();
-  const [rounds, checks, sleep] = await Promise.all([
+  // About six months: the charts show the last 60 days, the sleep insights use it all.
+  const since = new Date(`${addDays(today, -INSIGHT_DAYS)}T00:00:00Z`).toISOString();
+  const [rounds, checks, sleep, sets] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM speed_rounds WHERE performed_at >= ? ORDER BY performed_at").bind(since).all<SpeedRound>(),
     c.env.DB.prepare("SELECT * FROM brain_checks ORDER BY performed_at DESC LIMIT 26").all<BrainCheck>(),
-    c.env.DB.prepare("SELECT day, minutes, source FROM sleep WHERE day > ? ORDER BY day").bind(addDays(today, -14)).all<SleepRow>(),
+    c.env.DB.prepare("SELECT day, minutes, source FROM sleep WHERE day >= ? ORDER BY day").bind(addDays(today, -INSIGHT_DAYS)).all<SleepRow>(),
+    c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ?").bind(since).all<SetRow>(),
   ]);
 
   const bestByDay = new Map<string, number>();
@@ -790,8 +860,15 @@ app.get("/brain", async (c) => {
       startMs: lastRound?.final_ms ?? 500,
       roundsToday: rounds.results.filter((r) => localDay(r.performed_at, timeZone) === today).length,
       streak: dayStreak(bestByDay.keys(), today),
-      daily: [...bestByDay].map(([day, bestMs]) => ({ day, bestMs })),
+      daily: [...bestByDay].filter(([day]) => day >= addDays(today, -60)).map(([day, bestMs]) => ({ day, bestMs })),
       checks: checkRows,
+      insights: sleepInsights({
+        sleep: sleep.results,
+        speedDaily: [...bestByDay].map(([day, value]) => ({ day, value })),
+        sets: sets.results,
+        checks: checkRows,
+        timeZone,
+      }),
       checkDue: brainCheckDue(checkRows.at(-1)?.day ?? null, today),
       sleep: {
         nights,
@@ -875,12 +952,13 @@ app.post("/reminders", async (c) => {
 
 // Everything in one file: sets, cardio and weigh-ins, with a "type" column to filter on in a spreadsheet.
 app.get("/export.csv", async (c) => {
-  const [sets, cardio, bodyWeight] = await Promise.all([
+  const [sets, cardio, bodyWeight, protein] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM sets").all<SetRow>(),
     c.env.DB.prepare("SELECT * FROM cardio").all<CardioRow>(),
     c.env.DB.prepare("SELECT * FROM body_weight").all<BodyWeightRow>(),
+    c.env.DB.prepare("SELECT * FROM protein").all<ProteinRow>(),
   ]);
-  const csv = exportCsv({ sets: sets.results, cardio: cardio.results, bodyWeight: bodyWeight.results, timeZone: c.env.TIMEZONE });
+  const csv = exportCsv({ sets: sets.results, cardio: cardio.results, bodyWeight: bodyWeight.results, protein: protein.results, timeZone: c.env.TIMEZONE });
   return c.body(csv, 200, {
     "content-type": "text/csv; charset=utf-8",
     "content-disposition": `attachment; filename="arif-gym-${localDay(new Date(), c.env.TIMEZONE)}.csv"`,

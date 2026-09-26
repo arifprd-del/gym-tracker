@@ -99,6 +99,13 @@ svg text { fill: var(--muted); font-size: 11px; }
   border: 2px solid var(--c); color: var(--card); font-size: 13px; font-weight: 800; line-height: 1; }
 .check.done { background: var(--c); }
 .check-list .detail { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.split-head { display: flex; justify-content: space-between; gap: 12px; }
+.meter { height: 10px; border-radius: 5px; background: var(--heat-0); overflow: hidden; }
+.meter span { display: block; height: 100%; border-radius: 5px; background: var(--accent); }
+.protein-add { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+.protein-add button { padding: 12px 0; font-size: 16px; font-weight: 600; border-radius: 12px; }
+.protein-custom { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.protein-custom input { width: 80px; font-size: 17px; }
 .progress { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 0 0 14px; }
 .progress span { height: 6px; border-radius: 3px; background: var(--heat-0); }
 .progress span.done { background: var(--accent); }
@@ -196,6 +203,15 @@ export type DashboardData = {
     summary: { today: number | null; yesterday: number | null; average7: number | null; thisWeek: number; lastSynced: string | null };
     goal: number;
     hasSyncKey: boolean;
+  };
+  protein: {
+    today: number;
+    target: number | null; // null until there's a weigh-in
+    fallback: number;
+    perKg: number;
+    weightKg: number | null;
+    last: { grams: number; time: string } | null;
+    daily: { day: string; grams: number }[];
   };
   bodyWeight: {
     weekly: { week: string; kg: number | null }[];
@@ -407,6 +423,69 @@ function stepsChart({ daily, goal }: DashboardData["steps"]): Html {
   </svg>`;
 }
 
+function proteinChart(daily: DashboardData["protein"]["daily"], target: number): Html {
+  const width = 400;
+  const height = 130;
+  const chartHeight = 102;
+  const right = 20;
+  const max = Math.max(target * 1.25, ...daily.map((d) => d.grams));
+  const slot = (width - right) / daily.length;
+  const barWidth = slot * 0.7;
+  const y = (v: number) => chartHeight - (v / max) * (chartHeight - 10);
+  return html`<svg class="volume" viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="Protein per day for the last ${daily.length} days, target ${target} g">
+    ${daily.map((d, i) => {
+      const x = i * slot + (slot - barWidth) / 2;
+      return html`<g>
+        ${d.grams ? html`<rect x="${x.toFixed(1)}" y="${y(d.grams).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${(chartHeight - y(d.grams)).toFixed(1)}" rx="1.5" fill="var(--accent)"></rect>` : ""}
+        <rect x="${(i * slot).toFixed(1)}" y="0" width="${slot.toFixed(1)}" height="${chartHeight}" fill="transparent"><title>${shortDate(d.day)}: ${d.grams ? `${d.grams} g${d.grams >= target ? " ✓ target" : ""}` : "nothing logged"}</title></rect>
+        ${(daily.length - 1 - i) % 7 === 0 ? html`<text x="${(i * slot + slot / 2).toFixed(1)}" y="${height - 8}" text-anchor="middle">${shortDate(d.day)}</text>` : ""}
+      </g>`;
+    })}
+    <line class="goal-line" x1="0" x2="${width - right}" y1="${y(target).toFixed(1)}" y2="${y(target).toFixed(1)}"></line>
+  </svg>`;
+}
+
+function proteinCard(p: DashboardData["protein"]): Html {
+  const target = p.target ?? p.fallback;
+  const left = target - p.today;
+  const pct = Math.min(100, Math.round((p.today / target) * 100));
+  return html`<section class="card" id="protein">
+    <h2 class="split-head"><span>Protein today</span><span>${p.today} / ${target} g</span></h2>
+    <div class="meter" aria-hidden="true"><span style="width: ${pct}%"></span></div>
+    <p style="margin: 8px 0 12px">${left > 0 ? html`<b>${left} g</b> to go` : html`<b style="color: var(--good)">Target reached ✓</b>`}
+      <span class="muted">· ${p.target ? `${p.perKg} g per kg × ${formatKg(p.weightKg!)} kg` : "add a weigh-in to set your own target"}</span></p>
+    <div class="protein-add">
+      ${[10, 20, 30, 40].map((g) => html`<button type="button" data-g="${g}">+${g} g</button>`)}
+    </div>
+    <form class="protein-custom" id="protein-form">
+      <input name="g" inputmode="numeric" pattern="[0-9]*" maxlength="3" placeholder="g" aria-label="Grams of protein" autocomplete="off" />
+      <button type="submit">Add</button>
+      ${p.last ? html`<button type="button" class="link" id="protein-undo">Undo +${p.last.grams} g (${p.last.time})</button>` : ""}
+    </form>
+    <p class="muted" id="protein-msg" role="status" style="margin: 0 0 10px; font-size: 13px"></p>
+    ${p.daily.some((d) => d.grams > 0) ? proteinChart(p.daily, target) : ""}
+    <p class="muted" style="margin: 6px 0 0; font-size: 13px">Rough guide: chicken breast 150 g ≈ 45 g · tin of tuna ≈ 25 g · whey scoop ≈ 24 g ·
+      Greek yogurt 200 g ≈ 20 g · 3 eggs ≈ 19 g · lentils, 1 cup cooked ≈ 18 g · milk 300 ml ≈ 10 g.</p>
+    <script>
+      (() => {
+        const msg = document.getElementById("protein-msg");
+        async function post(path, body) {
+          const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin" });
+          if (res.status === 401) { location.href = "/login?next=/%23protein"; return; }
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { msg.textContent = data.error || "Couldn't save. Check your signal and try again."; return; }
+          location.reload();
+        }
+        const add = (g) => { if (g >= 1 && g <= 300) { msg.textContent = "Saving…"; post("/api/protein", { grams: g }); } else msg.textContent = "Enter 1 to 300 grams."; };
+        document.querySelectorAll("#protein [data-g]").forEach((b) => b.addEventListener("click", () => add(Number(b.dataset.g))));
+        document.getElementById("protein-form").addEventListener("submit", (e) => { e.preventDefault(); add(Math.round(Number(e.target.g.value))); });
+        const undo = document.getElementById("protein-undo");
+        if (undo) undo.addEventListener("click", () => post("/api/protein/undo", {}));
+      })();
+    </script>
+  </section>`;
+}
+
 function syncKeyForm(hasSyncKey: boolean): Html {
   const confirm = hasSyncKey ? `return confirm('Make a new sync key? The old one stops working, so paste the new one into the shortcut.')` : "";
   return html`<form method="post" action="/steps-key" onsubmit="${confirm}" style="margin-top: 10px">
@@ -584,6 +663,8 @@ export function dashboardPage(data: DashboardData): Html {
       </header>
 
       ${habitCards(data.habits, data.today)}
+
+      ${proteinCard(data.protein)}
 
       ${recapCard(data.recap, data.today)}
 
@@ -853,6 +934,7 @@ function recapStats(r: WeekRecap): Html {
     ${item(r.steps.average === null ? "–" : `${r.steps.average.toLocaleString("en-GB")}`, r.steps.average === null ? "steps · not synced" : `steps a day · ${r.steps.daysAtGoal}/${r.steps.syncedDays} days at goal`)}
     ${item(r.bodyWeight ? `${formatKg(r.bodyWeight.kg)} kg` : "–", r.bodyWeight ? (r.bodyWeight.changeKg === null ? "body weight" : `body weight · ${signed(r.bodyWeight.changeKg, " kg")}`) : "no weigh-in")}
     ${r.brain ? item(`${r.brain.days}/${r.brain.goal}`, `brain training days${r.brain.days >= r.brain.goal ? " ✓" : ""}`) : ""}
+    ${r.protein && r.protein.daysLogged ? item(`${r.protein.averageG} g`, `protein a day · ${r.protein.daysAtTarget}/${r.protein.daysLogged} days at target`) : ""}
     ${r.sleep ? item(r.sleep.averageMinutes === null ? "–" : formatSleep(r.sleep.averageMinutes), r.sleep.averageMinutes === null ? "sleep · not synced" : `sleep a night · ${r.sleep.nights} nights synced`) : ""}
   </div>`;
 }

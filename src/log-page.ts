@@ -72,7 +72,8 @@ main.log { padding-bottom: 385px; gap: 14px; }
 @media (max-width: 360px) {
   .tabs button { font-size: 13px; padding: 10px 0; }
   .tab-dot { width: 6px; height: 6px; margin-right: 3px; }
-  .log header .button { padding: 6px 10px; font-size: 13px; }
+  .log header .row { gap: 5px; }
+  .log header .button { padding: 6px 8px; font-size: 13px; }
   .log h1 { font-size: 20px; }
 }
 .stepper { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; background: var(--bg);
@@ -523,6 +524,7 @@ export function logPage(data: LogPageData) {
           <h1>Log</h1>
           <div class="row">
             <a class="button" href="/#body-weight">Weigh-in</a>
+            <a class="button" href="/#protein">Protein</a>
             <a class="button" href="/brain">Brain</a>
             <a class="button" href="/">Dashboard</a>
           </div>
