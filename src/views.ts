@@ -588,6 +588,7 @@ export function dashboardPage(data: DashboardData): Html {
           <a class="button" href="/longevity" style="border-color: var(--longevity); color: var(--longevity)">🌱 Longevity</a>
           <a class="button" href="/reminders">Reminders</a>
           <a class="button" href="/export.csv">Export CSV</a>
+          <a class="button" href="/backups">Backups</a>
           <form method="post" action="/logout"><button type="submit">Sign out</button></form>
         </div>
       </header>
@@ -1016,6 +1017,37 @@ export function summaryPage(s: WorkoutSummary, today: string, targets: Record<st
             <p style="margin: 0"><span class="swatch" style="background: var(--${s.next}); display: inline-block; margin-right: 6px"></span><b>${DAY_LABELS[s.next]}</b> is next in your rotation. Rest well.</p>
           </section>`
         : ""}
+    </main>`,
+  );
+}
+
+export function backupsPage(list: { date: string; rows: number; bytes: number; createdAt: string }[], done: boolean): Html {
+  return layout(
+    "Backups · Arif Gym Tracker",
+    html`<main style="max-width: 560px">
+      <header><h1>Backups</h1><a class="button" href="/">Dashboard</a></header>
+      ${done ? html`<p role="status" style="color: var(--good); margin: 0">Backup saved ✓</p>` : ""}
+      <section class="card" style="display: grid; gap: 12px">
+        <p style="margin: 0">Every Sunday night the tracker saves a full copy of your data, and keeps the last 12 weeks.
+          Cloudflare's own restore points only go back 30 days.</p>
+        ${list.length
+          ? html`<table>
+              <tr><th>Date</th><th class="num">Rows</th><th class="num">Size</th><th></th></tr>
+              ${list.map(
+                (b) => html`<tr>
+                  <td>${shortDate(b.date)}</td>
+                  <td class="num">${b.rows.toLocaleString("en-GB")}</td>
+                  <td class="num">${b.bytes < 1024 * 1024 ? `${Math.max(1, Math.round(b.bytes / 1024))} KB` : `${(b.bytes / 1024 / 1024).toFixed(1)} MB`}</td>
+                  <td class="num"><a href="/backups/${b.date}">Download</a></td>
+                </tr>`,
+              )}
+            </table>`
+          : html`<p class="muted" style="margin: 0">No backups yet. The first one runs on Sunday night, or make one now.</p>`}
+        <form method="post" action="/backups"><button class="primary" type="submit">Back up now</button></form>
+        <p class="muted" style="margin: 0; font-size: 13px">To restore, download a backup and run
+          <code>npx wrangler d1 execute gym-tracker --remote --file arif-gym-backup-DATE.sql</code>. It puts back every row it
+          contains and leaves newer rows alone. Afterwards, turn notifications on again on the Reminders page.</p>
+      </section>
     </main>`,
   );
 }

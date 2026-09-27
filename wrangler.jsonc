@@ -13,7 +13,9 @@
     "STEPS_DAILY_GOAL": "8000"
   },
   // Reminder notifications: checks every 15 minutes what's due (see /reminders).
-  "triggers": { "crons": ["*/15 * * * *"] },
+  // Backups: every Sunday at 03:17 UTC, into the BACKUPS KV namespace (see /backups).
+  "triggers": { "crons": ["*/15 * * * *", "17 3 * * 0"] },
+  "kv_namespaces": [{ "binding": "BACKUPS", "id": "ceaa3c532369494c89102cae3491cb77" }],
   "d1_databases": [
     {
       "binding": "DB",

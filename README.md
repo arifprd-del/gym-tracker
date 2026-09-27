@@ -84,6 +84,10 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   12-minute treadmill test with estimated VO₂max), weekly home blood pressure (NHS bands, weekly-average chart with
   the 135/85 home limit) and waist with waist-to-height ratio (NICE bands). The weekly reminder includes whatever is
   due. It's for tracking, not diagnosis.
+- **Backups (`/backups`):** every Sunday night the whole database is saved as SQL into a Workers KV namespace
+  (`BACKUPS`), keeping the last 12 weeks. You can download any backup or make one now. Restore with
+  `npx wrangler d1 execute gym-tracker --remote --file arif-gym-backup-DATE.sql` (it uses `INSERT OR REPLACE`, so
+  it's safe to run on top of existing data). The push key pair is left out, so turn notifications on again after a restore.
 - **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and

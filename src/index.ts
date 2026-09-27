@@ -80,14 +80,17 @@ import { longevityPage } from "./longevity-page";
 import { FITNESS_TESTS, fitnessCheckDue, type FitnessTest } from "./health";
 import { healthPage } from "./health-page";
 import { todayPage } from "./today-page";
+import { BACKUP_PREFIX, backupsToPrune, dumpSql, type TableDump } from "./backup";
 import { isPushEndpoint, loadVapidKeys, sendPush, type PushSubscription } from "./push";
 import { dueRules, isTime, localClock, REMINDER_KEYS, reminderMessage, type ReminderKey, type ReminderRule, type ReminderState } from "./reminders";
 import { remindersPage } from "./reminders-page";
 import { logPage, type ExerciseButton } from "./log-page";
-import { dashboardPage, exercisePage, loginPage, recapPage, stepsKeyPage, summaryPage, type ExerciseRecord } from "./views";
+import { backupsPage, dashboardPage, exercisePage, loginPage, recapPage, stepsKeyPage, summaryPage, type ExerciseRecord } from "./views";
 
 type Env = {
   DB: D1Database;
+  /** Weekly SQL backups of every table (see runBackup). */
+  BACKUPS: KVNamespace;
   DASHBOARD_PASSWORD: string;
   TIMEZONE: string;
   CARDIO_WEEKLY_MINUTES?: string;
@@ -1127,6 +1130,26 @@ app.post("/reminders", async (c) => {
   return c.redirect("/reminders?saved=1", 303);
 });
 
+// Backups: list, download, and make one now.
+app.get("/backups", async (c) => {
+  const { keys } = await c.env.BACKUPS.list<BackupMeta>({ prefix: BACKUP_PREFIX });
+  const list = keys.map((k) => ({ date: k.name.slice(BACKUP_PREFIX.length), ...(k.metadata ?? { rows: 0, bytes: 0, createdAt: "" }) })).sort((a, b) => b.date.localeCompare(a.date));
+  return c.html(backupsPage(list, c.req.query("done") === "1"));
+});
+
+app.get("/backups/:date", async (c) => {
+  const date = c.req.param("date");
+  if (!isIsoDate(date)) return c.notFound();
+  const sql = await c.env.BACKUPS.get(`${BACKUP_PREFIX}${date}`);
+  if (sql === null) return c.notFound();
+  return c.body(sql, 200, { "content-type": "application/sql; charset=utf-8", "content-disposition": `attachment; filename="arif-gym-backup-${date}.sql"` });
+});
+
+app.post("/backups", async (c) => {
+  await runBackup(c.env);
+  return c.redirect("/backups?done=1", 303);
+});
+
 // Everything in one file: sets, cardio and weigh-ins, with a "type" column to filter on in a spreadsheet.
 app.get("/export.csv", async (c) => {
   const [sets, cardio, bodyWeight] = await Promise.all([
@@ -1236,9 +1259,35 @@ async function runReminders(env: Env, now = new Date()): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Backups (weekly cron, see wrangler.jsonc): every table as SQL into KV, keeping the newest 12.
+
+const BACKUP_CRON = "17 3 * * 0";
+type BackupMeta = { rows: number; bytes: number; createdAt: string };
+
+async function runBackup(env: Env, now = new Date()): Promise<{ key: string; meta: BackupMeta }> {
+  const { results: tables } = await env.DB.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name != 'd1_migrations' ORDER BY name",
+  ).all<{ name: string }>();
+  const dumps: TableDump[] = [];
+  for (const { name } of tables) {
+    const { results } = await env.DB.prepare(`SELECT * FROM "${name.replace(/"/g, '""')}"`).all<Record<string, unknown>>();
+    // The push key pair stays out of backups; after a restore, notifications are simply turned on again.
+    dumps.push({ name, rows: name === "settings" ? results.filter((r) => r.key !== "vapid_keys") : results });
+  }
+  const createdAt = now.toISOString();
+  const sql = dumpSql(dumps, createdAt);
+  const key = `${BACKUP_PREFIX}${localDay(now, env.TIMEZONE)}`;
+  const meta: BackupMeta = { rows: dumps.reduce((n, t) => n + t.rows.length, 0), bytes: new TextEncoder().encode(sql).length, createdAt };
+  await env.BACKUPS.put(key, sql, { metadata: meta });
+  const { keys } = await env.BACKUPS.list({ prefix: BACKUP_PREFIX });
+  await Promise.all(backupsToPrune(keys.map((k) => k.name)).map((k) => env.BACKUPS.delete(k)));
+  return { key, meta };
+}
+
 export default {
   fetch: app.fetch,
-  scheduled(_controller, env, ctx) {
-    ctx.waitUntil(runReminders(env));
+  scheduled(controller, env, ctx) {
+    ctx.waitUntil(controller.cron === BACKUP_CRON ? runBackup(env).then(() => undefined) : runReminders(env));
   },
 } satisfies ExportedHandler<Env>;
