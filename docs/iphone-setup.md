@@ -121,6 +121,7 @@ The dashboard's **Reminders** page sends iPhone notifications, only when somethi
 - **Gym** (default 17:30, Mon–Fri): if you haven't trained that day, your next workout (Push, Pull or Legs), with the
   never-miss-twice nudge. Tapping it opens the Log on that tab.
 - **Brain training** (default 20:00, every day): if today's 2 Quick Glance rounds aren't done.
+- **Mobility** (default 08:30, every day): if today's 6-minute routine on the Longevity page isn't done.
 - **Weekly check-in** (default Sunday 10:00): if you haven't weighed in this week, or the Brain Check is due.
 
 To turn them on (iOS 16.4 or later):

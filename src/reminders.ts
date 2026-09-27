@@ -2,11 +2,11 @@
 // without a database; the Worker's cron (every 15 minutes) loads the state and sends what's due.
 import { daysAgo, type SplitDay } from "./lib";
 
-export type ReminderKey = "gym" | "brain" | "weekly";
+export type ReminderKey = "gym" | "brain" | "weekly" | "mobility";
 export type ReminderRule = { key: ReminderKey; enabled: boolean; time: string; days: number[]; lastSentDay: string | null }; // days: 0 = Sunday
 export type ReminderMessage = { title: string; body: string; url: string; tag: string };
 
-export const REMINDER_KEYS: ReminderKey[] = ["gym", "brain", "weekly"];
+export const REMINDER_KEYS: ReminderKey[] = ["gym", "mobility", "brain", "weekly"];
 export const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /** A reminder is sent up to this long after its time (covers a late cron run), never later in the day. */
 const WINDOW_MINUTES = 180;
@@ -48,6 +48,8 @@ export type ReminderState = {
   brainStreak: number;
   weighedInThisWeek: boolean;
   brainCheckDue: boolean;
+  mobilityDoneToday: boolean;
+  mobilityStreak: number;
 };
 
 const LABEL: Record<SplitDay, string> = { push: "Push", pull: "Pull", legs: "Legs" };
@@ -69,6 +71,11 @@ export function reminderMessage(key: ReminderKey, s: ReminderState): ReminderMes
           ? `2 Quick Glance rounds, about 7 minutes, keep your ${s.brainStreak}-day streak going.`
           : "2 Quick Glance rounds, about 7 minutes.";
     return { title: "Brain training 🧠", body, url: "/brain", tag: "brain" };
+  }
+  if (key === "mobility") {
+    if (s.mobilityDoneToday) return null;
+    const streak = s.mobilityStreak > 0 ? ` Keep your ${s.mobilityStreak}-day streak going.` : "";
+    return { title: "Mobility 🌱", body: `6 minutes: squat hold, World's Greatest Stretch, pogo hops.${streak}`, url: "/longevity", tag: "mobility" };
   }
   const todo = [!s.weighedInThisWeek && "weigh in", s.brainCheckDue && "do the Brain Check (3 min)"].filter(Boolean) as string[];
   if (todo.length === 0) return null;

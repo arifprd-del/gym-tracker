@@ -33,6 +33,8 @@ test("reminder messages only when something is left to do", () => {
     brainStreak: 4,
     weighedInThisWeek: false,
     brainCheckDue: true,
+    mobilityDoneToday: false,
+    mobilityStreak: 3,
   };
   assert.deepEqual(reminderMessage("gym", s), { title: "Pull day 💪", body: "Last Pull: 3 days ago. Tap to open the log.", url: "/log?tab=pull", tag: "gym" });
   assert.equal(reminderMessage("gym", { ...s, nudge: "Never miss twice: Pull today." })!.body, "Never miss twice: Pull today.");
@@ -44,6 +46,13 @@ test("reminder messages only when something is left to do", () => {
   assert.equal(reminderMessage("brain", { ...s, roundsToday: 1 })!.body, "One more Quick Glance round finishes today (about 3 minutes).");
   assert.equal(reminderMessage("brain", { ...s, roundsToday: 2 }), null);
 
+  assert.deepEqual(reminderMessage("mobility", s), {
+    title: "Mobility 🌱",
+    body: "6 minutes: squat hold, World's Greatest Stretch, pogo hops. Keep your 3-day streak going.",
+    url: "/longevity",
+    tag: "mobility",
+  });
+  assert.equal(reminderMessage("mobility", { ...s, mobilityDoneToday: true }), null);
   assert.deepEqual(reminderMessage("weekly", s), { title: "Weekly check-in", body: "Still to do this week: weigh in and do the Brain Check (3 min).", url: "/#body-weight", tag: "weekly" });
   assert.equal(reminderMessage("weekly", { ...s, weighedInThisWeek: true })!.url, "/brain#check");
   assert.equal(reminderMessage("weekly", { ...s, weighedInThisWeek: true, brainCheckDue: false }), null);

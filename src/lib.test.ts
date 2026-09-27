@@ -128,7 +128,7 @@ test("push / pull / legs split", async () => {
     { name: "squat", day: "legs" },
   ]);
   assert.equal(dayOf("bench press"), "push");
-  assert.equal(dayOf("farmer carry"), "other");
+  assert.equal(dayOf("sled push"), "other");
 
   const sets = [
     set("2026-09-21T08:00:00.000Z", "bench press", 80, 5), // Mon: push
@@ -136,7 +136,7 @@ test("push / pull / legs split", async () => {
     set("2026-09-21T08:20:00.000Z", "squat", 100, 5), // one leg set on push day
     set("2026-09-22T08:00:00.000Z", "pull up", 0, 10), // Tue: pull (bodyweight)
     set("2026-09-23T08:00:00.000Z", "squat", 100, 5), // Wed: legs
-    set("2026-09-23T08:10:00.000Z", "farmer carry", 40, 1),
+    set("2026-09-23T08:10:00.000Z", "sled push", 40, 1),
   ];
 
   const [week] = weeklyVolumeByDay(sets, dayOf, "UTC", 1, new Date("2026-09-23T12:00:00.000Z"));
@@ -218,7 +218,7 @@ test("habit features", async () => {
   assert.deepEqual(lib.todaysPlan(new Map(), "2026-09-23"), { next: "push", doneToday: null });
 
   // Weekly checklist for the week of Mon 21 Sept.
-  const list = lib.weeklyChecklist({ days, cardioMinutesThisWeek: 55, cardioGoalMinutes: 90, weighedInThisWeek: true, brainDaysThisWeek: 2, today: "2026-09-24" });
+  const list = lib.weeklyChecklist({ days, cardioMinutesThisWeek: 55, cardioGoalMinutes: 90, weighedInThisWeek: true, brainDaysThisWeek: 2, mobilityDaysThisWeek: 5, today: "2026-09-24" });
   assert.deepEqual(
     list.map((i) => [i.key, i.done, i.detail]),
     [
@@ -228,6 +228,7 @@ test("habit features", async () => {
       ["cardio", false, "55/90 min"],
       ["weigh-in", true, ""],
       ["brain", false, "2/5 days"],
+      ["mobility", true, "5/5 days"],
     ],
   );
 
@@ -607,4 +608,26 @@ test("protein target and daily totals", async () => {
     "Europe/London",
   );
   assert.deepEqual([...days], [["2026-09-26", 50], ["2026-09-27", 25]]);
+});
+
+test("timed exercises: seconds, no volume, +5 s targets", async () => {
+  const { isTimed, isLongevity, formatLoad, volume, beatTargets } = await import("./lib");
+  assert.ok(isTimed("dead hang") && isTimed("farmers carry") && isTimed("plank") && isTimed("squat hold"));
+  assert.ok(!isTimed("bench press") && !isTimed("hanging leg raise"));
+  assert.ok(isLongevity("pogo hops") && isLongevity("interval walk") && isLongevity("suitcase carry") && !isLongevity("squat"));
+  assert.equal(formatLoad({ exercise: "dead hang", weight_kg: 0, reps: 45 }), "45 s");
+  assert.equal(formatLoad({ exercise: "farmers carry", weight_kg: 24, reps: 60 }), "24 kg × 60 s");
+  assert.equal(formatLoad({ exercise: "bench press", weight_kg: 80, reps: 5 }), "80 kg × 5");
+  assert.equal(volume([{ exercise: "farmers carry", weight_kg: 24, reps: 60 }, { exercise: "row", weight_kg: 50, reps: 10 }]), 500);
+  assert.deepEqual(beatTargets({ weight: 0, reps: 30 }, null, true), [{ weight: 0, reps: 35 }]);
+  assert.deepEqual(beatTargets({ weight: 24, reps: 60 }, { repsMin: 40, repsMax: 60 }, true), [{ weight: 26.5, reps: 40 }, { weight: 24, reps: 65 }]);
+});
+
+test("mobility days need the whole home routine", async () => {
+  const { mobilityDays } = await import("./longevity");
+  const rows = [
+    { day: "2026-09-26", item: "squat" }, { day: "2026-09-26", item: "stretch" }, { day: "2026-09-26", item: "pogo" },
+    { day: "2026-09-27", item: "squat" }, { day: "2026-09-27", item: "hang" },
+  ];
+  assert.deepEqual([...mobilityDays(rows)], ["2026-09-26"]);
 });

@@ -8,7 +8,7 @@
     // Used to decide which day a set belongs to on the dashboard and in "today" answers.
     "TIMEZONE": "Europe/London",
     // Weekly cardio goal on the dashboard checklist.
-    "CARDIO_WEEKLY_MINUTES": "90",
+    "CARDIO_WEEKLY_MINUTES": "150",
     // Daily steps goal line on the dashboard's steps chart.
     "STEPS_DAILY_GOAL": "8000",
     // Daily protein target: grams per kg of your latest weigh-in.

@@ -49,6 +49,10 @@ import {
   todaysPlan,
   weeklyChecklist,
   BRAIN_DAYS_GOAL,
+  isTimed,
+  LONGEVITY_EXERCISES,
+  MOBILITY_DAYS_GOAL,
+  TIMED_PATTERN,
   PROTEIN_FALLBACK_G,
   proteinByDay,
   proteinTarget,
@@ -74,6 +78,8 @@ import {
 } from "./lib";
 import { brainPage } from "./brain-page";
 import { sleepInsights } from "./insights";
+import { INTERVAL_WALK, INTERVAL_WALKS_GOAL, MOBILITY_ITEMS, mobilityDays, type MobilityItem } from "./longevity";
+import { longevityPage } from "./longevity-page";
 import { isPushEndpoint, loadVapidKeys, sendPush, type PushSubscription } from "./push";
 import { dueRules, isTime, localClock, REMINDER_KEYS, reminderMessage, type ReminderKey, type ReminderRule, type ReminderState } from "./reminders";
 import { remindersPage } from "./reminders-page";
@@ -151,6 +157,12 @@ async function loadRecap(env: Env, week: string): Promise<WeekRecap> {
     env.DB.prepare("SELECT day, minutes FROM sleep WHERE day >= ? AND day <= ?").bind(week, addDays(week, 6)).all<SleepRow>(),
     env.DB.prepare("SELECT * FROM protein WHERE logged_at >= ? AND logged_at < ?").bind(utc(addDays(week, -1)), to).all<ProteinRow>(),
   ]);
+  const [mobilityRows, walks] = await Promise.all([
+    env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ? AND day <= ?").bind(week, addDays(week, 6)).all<{ day: string; item: string }>(),
+    env.DB.prepare("SELECT performed_at FROM cardio WHERE activity = ? AND performed_at >= ? AND performed_at < ?").bind(INTERVAL_WALK, utc(addDays(week, -1)), to).all<{ performed_at: string }>(),
+  ]);
+  const mobilityDayCount = mobilityDays(mobilityRows.results).size;
+  const intervalWalks = walks.results.filter((w) => { const d = localDay(w.performed_at, env.TIMEZONE); return d >= week && d <= addDays(week, 6); }).length;
   const proteinDays = [...proteinByDay(protein.results, env.TIMEZONE)].filter(([d]) => d >= week && d <= addDays(week, 6)).map(([, g]) => g);
   const latestWeight = [...bodyWeight.results].sort((a, b) => b.measured_on.localeCompare(a.measured_on))[0];
   const weekProteinTarget = proteinTarget(latestWeight?.weight_kg, proteinPerKg(env));
@@ -169,7 +181,8 @@ async function loadRecap(env: Env, week: string): Promise<WeekRecap> {
   });
   return {
     ...recap,
-    complete: recap.complete && brainDays >= BRAIN_DAYS_GOAL,
+    complete: recap.complete && brainDays >= BRAIN_DAYS_GOAL && mobilityDayCount >= MOBILITY_DAYS_GOAL,
+    longevity: { mobilityDays: mobilityDayCount, mobilityGoal: MOBILITY_DAYS_GOAL, intervalWalks, intervalWalksGoal: INTERVAL_WALKS_GOAL },
     brain: { days: brainDays, goal: BRAIN_DAYS_GOAL },
     sleep: { averageMinutes: sleep.results.length ? Math.round(sleepTotal / sleep.results.length) : null, nights: sleep.results.length },
     protein: {
@@ -418,6 +431,17 @@ app.post("/api/protein/undo", async (c) => {
   return c.json({ message: `Removed ${last.grams} g` });
 });
 
+// Longevity page: tick or untick one item of today's mobility routine.
+app.post("/api/mobility", async (c) => {
+  const parsed = z.object({ item: z.enum(MOBILITY_ITEMS as [MobilityItem, ...MobilityItem[]]), done: z.boolean() }).safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ error: "Unknown item" }, 400);
+  const today = localDay(new Date(), c.env.TIMEZONE);
+  const { item, done } = parsed.data;
+  if (done) await c.env.DB.prepare("INSERT OR IGNORE INTO mobility (day, item) VALUES (?, ?)").bind(today, item).run();
+  else await c.env.DB.prepare("DELETE FROM mobility WHERE day = ? AND item = ?").bind(today, item).run();
+  return c.json({ message: "Saved" });
+});
+
 // Sleep typed on the Brain page: replaces that night's value (and the sync won't overwrite it); 0 clears the night.
 const sleepEntrySchema = z.object({ day: z.string(), minutes: z.number().int().min(0).max(1440) });
 app.post("/api/brain/sleep", async (c) => {
@@ -649,11 +673,13 @@ app.get("/log", async (c) => {
       today: today.map((s) => ({ id: s.id, exercise: s.exercise, weight: s.weight_kg, reps: s.reps, at: s.performed_at })),
       plan: plan.next,
       doneToday: plan.doneToday,
+      timedPattern: TIMED_PATTERN,
+      longevity: LONGEVITY_EXERCISES,
       stalls: Object.fromEntries(stallsByExercise(history.results, timeZone, todayDate)),
       previous: Object.fromEntries(
         [...lastSessionBest(history.results, timeZone, todayDate)].map(([name, best]) => [
           name,
-          { ...best, targets: beatTargets(best, buttons.find((b) => b.name === name)?.target) },
+          { ...best, targets: beatTargets(best, buttons.find((b) => b.name === name)?.target, isTimed(name)) },
         ]),
       ),
       cardio: {
@@ -693,6 +719,7 @@ app.get("/", async (c) => {
   const proteinRows = await c.env.DB.prepare("SELECT * FROM protein WHERE logged_at >= ? ORDER BY logged_at")
     .bind(new Date(`${addDays(today, -PROTEIN_DAYS - 1)}T00:00:00Z`).toISOString())
     .all<ProteinRow>();
+  const mobilityRows = await c.env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ?").bind(weekStart(today)).all<{ day: string; item: string }>();
   const brainRounds = await c.env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ?")
     .bind(new Date(`${addDays(weekStart(today), -1)}T00:00:00Z`).toISOString())
     .all<{ performed_at: string }>();
@@ -726,6 +753,7 @@ app.get("/", async (c) => {
           cardioGoalMinutes: cardioGoal(c.env),
           weighedInThisWeek,
           brainDaysThisWeek: new Set(brainRounds.results.map((r) => localDay(r.performed_at, timeZone)).filter((d) => d >= weekStart(today))).size,
+          mobilityDaysThisWeek: mobilityDays(mobilityRows.results).size,
           today,
         }),
       },
@@ -815,6 +843,44 @@ app.get("/recap", async (c) => {
   const asked = c.req.query("week");
   const week = isIsoDate(asked) && asked <= today ? weekStart(asked) : recapWeekFor(today);
   return c.html(recapPage(await loadRecap(c.env, week), today));
+});
+
+// Longevity: the daily mobility routine, this week's longevity training and how to progress.
+app.get("/longevity", async (c) => {
+  const timeZone = c.env.TIMEZONE;
+  const today = localDay(new Date(), timeZone);
+  const thisWeek = weekStart(today);
+  const since = new Date(`${addDays(thisWeek, -1)}T00:00:00Z`).toISOString();
+  const [mobilityRows, cardio, sets, bestHang] = await Promise.all([
+    c.env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ?").bind(addDays(today, -61)).all<{ day: string; item: string }>(),
+    c.env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ?").bind(since).all<CardioRow>(),
+    c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ?").bind(since).all<SetRow>(),
+    c.env.DB.prepare("SELECT MAX(reps) AS s FROM sets WHERE exercise = 'dead hang'").first<{ s: number | null }>(),
+  ]);
+  const inWeek = (iso: string) => { const d = localDay(iso, timeZone); return d >= thisWeek && d <= today; };
+  const weekCardio = cardio.results.filter((r) => inWeek(r.performed_at));
+  const walks = weekCardio.filter((r) => r.activity === INTERVAL_WALK);
+  const weekSets = sets.results.filter((s) => inWeek(s.performed_at));
+  const sessionDays = (match: RegExp) => new Set(weekSets.filter((s) => match.test(s.exercise)).map((s) => localDay(s.performed_at, timeZone))).size;
+  const days = mobilityDays(mobilityRows.results);
+  return c.html(
+    longevityPage({
+      today,
+      done: mobilityRows.results.filter((r) => r.day === today).map((r) => r.item as MobilityItem),
+      hangLoggedToday: sets.results.some((s) => /\bhang\b/.test(s.exercise) && localDay(s.performed_at, timeZone) === today),
+      streak: dayStreak(days, today),
+      mobilityDaysThisWeek: [...days].filter((d) => d >= thisWeek).length,
+      week: {
+        intervalWalks: walks.length,
+        intervalMinutes: Math.round(walks.reduce((sum, r) => sum + r.minutes, 0)),
+        cardioMinutes: Math.round(weekCardio.reduce((sum, r) => sum + r.minutes, 0)),
+        cardioGoal: cardioGoal(c.env),
+        hangCarrySessions: sessionDays(/\b(hang|carry)\b/),
+        jumpSessions: sessionDays(/\b(pogo|jump|jumps|hops)\b/),
+      },
+      bestHangSeconds: bestHang?.s ?? null,
+    }),
+  );
 });
 
 const INSIGHT_DAYS = 180;
@@ -1021,6 +1087,7 @@ async function loadReminderState(env: Env, today: string): Promise<ReminderState
     env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ?").bind(since).all<{ performed_at: string }>(),
     env.DB.prepare("SELECT performed_at FROM brain_checks ORDER BY performed_at DESC LIMIT 1").first<{ performed_at: string }>(),
   ]);
+  const mobility = mobilityDays((await env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ?").bind(addDays(today, -61)).all<{ day: string; item: string }>()).results);
   const days = trainingDaysByType(sets.results, dayLookup(exercises.results), timeZone);
   const activeDays = new Set([...days.keys(), ...cardioMinutesPerDay(cardio.results, timeZone).keys()]);
   const plan = todaysPlan(days, today);
@@ -1035,6 +1102,8 @@ async function loadReminderState(env: Env, today: string): Promise<ReminderState
     brainStreak: dayStreak(roundDays, today),
     weighedInThisWeek: Boolean(weighIn),
     brainCheckDue: brainCheckDue(lastCheck ? localDay(lastCheck.performed_at, timeZone) : null, today),
+    mobilityDoneToday: mobility.has(today),
+    mobilityStreak: dayStreak(mobility, today),
   };
 }
 

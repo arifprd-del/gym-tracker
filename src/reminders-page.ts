@@ -1,11 +1,12 @@
 import { html, raw } from "hono/html";
-import { WEEKDAYS, type ReminderKey, type ReminderRule } from "./reminders";
+import { REMINDER_KEYS, WEEKDAYS, type ReminderKey, type ReminderRule } from "./reminders";
 import { layout } from "./views";
 
 const ABOUT: Record<ReminderKey, { title: string; text: string }> = {
   gym: { title: "Gym", text: "If you haven't trained yet that day: your next workout (Push, Pull or Legs), with the never-miss-twice nudge." },
   brain: { title: "Brain training", text: "If today's 2 Quick Glance rounds aren't done." },
   weekly: { title: "Weekly check-in", text: "If you haven't weighed in this week, or the Brain Check is due." },
+  mobility: { title: "Mobility", text: "If today's 6-minute routine (squat hold, World's Greatest Stretch, pogo hops) isn't done." },
 };
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Monday first
 
@@ -46,8 +47,9 @@ export function remindersPage(d: { rules: ReminderRule[]; publicKey: string; dev
       </section>
 
       <form method="post" action="/reminders" style="display: grid; gap: 16px">
-        ${(["gym", "brain", "weekly"] as ReminderKey[]).map((key) => {
-          const r = byKey.get(key)!;
+        ${REMINDER_KEYS.map((key) => {
+          const r = byKey.get(key);
+          if (!r) return "";
           return html`<section class="card rule${r.enabled ? "" : " off"}">
             <div class="rem-head">
               <label><input type="checkbox" name="${key}_enabled" ${r.enabled ? "checked" : ""} /> ${ABOUT[key].title}</label>

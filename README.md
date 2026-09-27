@@ -23,8 +23,8 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   recent sets with delete buttons. Cardio has its own minutes-per-week chart, and cardio days are marked with a dot on
   the calendar. It supports light and dark mode and works on a phone.
 - **Habit features (Atomic Habits):**
-  - *This week* checklist: Push, Pull, Legs, the cardio goal (`CARDIO_WEEKLY_MINUTES` in `wrangler.jsonc`, default 90),
-    a weigh-in and brain training on 5 days, with a progress bar and a "Week complete" state.
+  - *This week* checklist: Push, Pull, Legs, the cardio goal (`CARDIO_WEEKLY_MINUTES` in `wrangler.jsonc`, 150),
+    a weigh-in, brain training on 5 days and the mobility routine on 5 days, with a progress bar and a "Week complete" state.
   - *Next workout*: the next day in the Push → Pull → Legs rotation. The log screen opens on it until you've logged
     something today.
   - *Never miss twice*: a gentle banner after 4+ days without training, or late in the week when the streak is at risk.
@@ -69,6 +69,16 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   Glance speed, lifting strength (best estimated 1RM against each exercise's previous sessions), reaction time and
   symbol matching. Each measure is taken against your own recent level, and it needs 3 days of each kind of night
   before it shows a pattern.
+- **Longevity (`/longevity`, marked 🌱 in pink everywhere):** Dan Go's 7 longevity exercises.
+  - A 6-minute daily mobility routine: deep squat hold and dead hang with timers, World's Greatest Stretch and pogo
+    hops. It has a streak, a weekly-checklist item (5 days) and an optional reminder.
+  - **Interval walk** on the Cardio tab, with a full-screen 3 min fast / 3 min slow timer (or 2 / 3 for beginners)
+    that beeps at each change and fills in the minutes.
+  - Timed exercises (anything named hang, carry, plank or hold) log seconds instead of reps, beat last time by
+    5 seconds, and stay out of volume and stall alerts. Dead hang and farmer's carry are on Pull day; pogo hops and
+    broad jumps start Legs day.
+  - The page also shows this week's interval walks, hang/carry and jump sessions, the best dead hang, and
+    beginner / intermediate / advanced steps for all 7.
 - **CSV export:** one file with every set, cardio session, weigh-in and protein entry (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and

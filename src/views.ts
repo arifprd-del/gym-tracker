@@ -9,6 +9,7 @@ import {
   formatLoad,
   formatMinutes,
   formatSleep,
+  isTimed,
   SPLIT_DAYS,
   WORKOUT_DAYS,
   type BodyWeightRow,
@@ -36,6 +37,7 @@ const styles = `
   --accent: #2563eb; --accent-soft: #dbe6fd; --on-accent: #ffffff; --danger: #c52a2a;
   --heat-0: #e8ebf0; --nudge-bg: #fff1d6; --good: #0e7a52;
   --push: #2a78d6; --pull: #eb6834; --legs: #1baf7a; --other: #9aa0aa; --cardio: #4a3aa7;
+  --longevity: #c0307a; --longevity-soft: #fbe3ef;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -44,6 +46,7 @@ const styles = `
     --accent: #6d9bff; --accent-soft: #1f2b44; --on-accent: #0f1115; --danger: #ff7474;
     --heat-0: #232833; --nudge-bg: #3a2f17; --good: #4fd6a0;
     --push: #3987e5; --pull: #d95926; --legs: #199e70; --other: #5b6270; --cardio: #9085e9;
+    --longevity: #f07ab5; --longevity-soft: #3a1f2d;
     color-scheme: dark;
   }
 }
@@ -106,7 +109,7 @@ svg text { fill: var(--muted); font-size: 11px; }
 .protein-add button { padding: 12px 0; font-size: 16px; font-weight: 600; border-radius: 12px; }
 .protein-custom { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
 .protein-custom input { width: 80px; font-size: 17px; }
-.progress { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 0 0 14px; }
+.progress { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; margin: 0 0 14px; }
 .progress span { height: 6px; border-radius: 3px; background: var(--heat-0); }
 .progress span.done { background: var(--accent); }
 .complete { border-color: var(--accent); }
@@ -579,6 +582,7 @@ function cardioCard(cardio: DashboardData["cardio"]): Html {
 function checkColour(key: string): string {
   if (key === "weigh-in") return "var(--accent)";
   if (key === "brain") return "var(--good)";
+  if (key === "mobility") return "var(--longevity)";
   return `var(--${key})`;
 }
 
@@ -656,6 +660,7 @@ export function dashboardPage(data: DashboardData): Html {
         <div class="row">
           <a class="button primary" href="/log">Log a set</a>
           <a class="button" href="/brain">Brain</a>
+          <a class="button" href="/longevity" style="border-color: var(--longevity); color: var(--longevity)">🌱 Longevity</a>
           <a class="button" href="/reminders">Reminders</a>
           <a class="button" href="/export.csv">Export CSV</a>
           <form method="post" action="/logout"><button type="submit">Sign out</button></form>
@@ -721,7 +726,7 @@ export function dashboardPage(data: DashboardData): Html {
                 (r) => html`<tr>
                   <td>${dayDot(data.dayOf(r.exercise))}<a class="plain" href="${exerciseHref(r.exercise)}">${displayName(r.exercise)}</a>${data.stalled.has(r.exercise) ? html` <a class="tag" href="${exerciseHref(r.exercise)}" title="No progress in the last 3 sessions">Stalled</a>` : ""}</td>
                   <td class="num">${r.best_kg > 0 ? `${formatKg(r.best_kg)} kg` : "Bodyweight"}</td>
-                  <td class="num">${r.best_kg > 0 ? `${formatKg(r.best_e1rm)} kg` : "–"}</td>
+                  <td class="num">${r.best_kg > 0 && !isTimed(r.exercise) ? `${formatKg(r.best_e1rm)} kg` : "–"}</td>
                   <td class="num">${r.sets}</td>
                   <td class="num">${shortDate(r.last)}</td>
                 </tr>`,
@@ -806,7 +811,7 @@ function stallBanner(stall: Stall): Html {
 }
 
 /** Line chart of one value per session, placed by date so gaps between sessions show as gaps in time. */
-function progressChart(sessions: ExerciseSession[], bodyweight: boolean, colour: string): Html {
+function progressChart(sessions: ExerciseSession[], bodyweight: boolean, colour: string, name = ""): Html {
   if (sessions.length === 0) return html``;
   const width = 400;
   const height = 170;
@@ -836,7 +841,7 @@ function progressChart(sessions: ExerciseSession[], bodyweight: boolean, colour:
     ${sessions.length > 1 ? html`<path class="line" d="${path}" style="stroke: ${colour}"></path>` : ""}
     ${sessions.map(
       (s) => html`<circle cx="${px(s.day).toFixed(1)}" cy="${py(value(s)).toFixed(1)}" r="${s.record ? 5.5 : 4}" fill="${colour}" stroke="var(--card)" stroke-width="2">
-        <title>${shortDate(s.day)}: ${bodyweight ? `${s.bestReps} reps` : `est. 1RM ${formatKg(s.bestE1rm)} kg`} · best set ${formatLoad({ weight_kg: s.topWeight, reps: s.bestReps })}${s.record ? " · 🏆 record" : ""}</title>
+        <title>${shortDate(s.day)}: ${bodyweight ? `${s.bestReps}${isTimed(name) ? " s" : " reps"}` : isTimed(name) ? `${formatKg(s.topWeight)} kg` : `est. 1RM ${formatKg(s.bestE1rm)} kg`} · best set ${formatLoad({ weight_kg: s.topWeight, reps: s.bestReps, exercise: name })}${s.record ? " · 🏆 record" : ""}</title>
       </circle>`,
     )}
     ${ticks.map((d, i) => html`<text x="${px(d).toFixed(1)}" y="${height - 6}" text-anchor="${i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle"}">${shortDate(d)}</text>`)}
@@ -885,7 +890,7 @@ export function exercisePage(d: ExercisePageData): Html {
 
             <section class="card">
               <h2>${bodyweight ? "Best reps" : "Strength (est. 1RM)"}</h2>
-              ${progressChart(sessions, bodyweight, colour)}
+              ${progressChart(sessions, bodyweight, colour, d.name)}
             </section>
 
             <section class="card">
@@ -934,6 +939,7 @@ function recapStats(r: WeekRecap): Html {
     ${item(r.steps.average === null ? "–" : `${r.steps.average.toLocaleString("en-GB")}`, r.steps.average === null ? "steps · not synced" : `steps a day · ${r.steps.daysAtGoal}/${r.steps.syncedDays} days at goal`)}
     ${item(r.bodyWeight ? `${formatKg(r.bodyWeight.kg)} kg` : "–", r.bodyWeight ? (r.bodyWeight.changeKg === null ? "body weight" : `body weight · ${signed(r.bodyWeight.changeKg, " kg")}`) : "no weigh-in")}
     ${r.brain ? item(`${r.brain.days}/${r.brain.goal}`, `brain training days${r.brain.days >= r.brain.goal ? " ✓" : ""}`) : ""}
+    ${r.longevity ? item(`${r.longevity.mobilityDays}/${r.longevity.mobilityGoal}`, `🌱 mobility days · ${r.longevity.intervalWalks}/${r.longevity.intervalWalksGoal} interval walks`) : ""}
     ${r.protein && r.protein.daysLogged ? item(`${r.protein.averageG} g`, `protein a day · ${r.protein.daysAtTarget}/${r.protein.daysLogged} days at target`) : ""}
     ${r.sleep ? item(r.sleep.averageMinutes === null ? "–" : formatSleep(r.sleep.averageMinutes), r.sleep.averageMinutes === null ? "sleep · not synced" : `sleep a night · ${r.sleep.nights} nights synced`) : ""}
   </div>`;
@@ -978,7 +984,7 @@ export function recapPage(r: WeekRecap, today: string): Html {
         <h2>Personal bests</h2>
         ${r.records.length
           ? html`<ul class="recap-list">${r.records.map(
-              (p) => html`<li><a class="plain" href="${exerciseHref(p.exercise)}"><b>${displayName(p.exercise)}</b></a> ${formatLoad({ weight_kg: p.weight, reps: p.reps })} <span class="muted">· ${shortDate(p.day)}</span></li>`,
+              (p) => html`<li><a class="plain" href="${exerciseHref(p.exercise)}"><b>${displayName(p.exercise)}</b></a> ${formatLoad({ weight_kg: p.weight, reps: p.reps, exercise: p.exercise })} <span class="muted">· ${shortDate(p.day)}</span></li>`,
             )}</ul>`
           : html`<p class="muted" style="margin: 0">No new weight records this week.</p>`}
       </section>
@@ -1066,7 +1072,7 @@ export function summaryPage(s: WorkoutSummary, today: string, targets: Record<st
                   </td>
                   <td class="num">
                     <span class="trend ${e.trend}">${TREND_LABEL[e.trend]}</span>
-                    ${e.previous ? html`<br /><span class="muted" style="font-size: 12px">last ${formatLoad({ weight_kg: e.previous.weight, reps: e.previous.reps })}</span>` : ""}
+                    ${e.previous ? html`<br /><span class="muted" style="font-size: 12px">last ${formatLoad({ weight_kg: e.previous.weight, reps: e.previous.reps, exercise: e.exercise })}</span>` : ""}
                   </td>
                 </tr>`,
               )}

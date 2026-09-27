@@ -18,6 +18,9 @@ export type LogPageData = {
   stalls: Record<string, Stall>;
   /** Best set of the previous session per exercise, with one-tap targets to beat it. */
   previous: Record<string, { day: string; weight: number; reps: number; targets: { weight: number; reps: number }[] }>;
+  /** Regex source for timed exercises (seconds instead of reps), and the longevity exercises shown in their own colour. */
+  timedPattern: string;
+  longevity: string[];
   cardio: {
     last: Record<string, { minutes: number; distance: number | null }>;
     today: { id: number; activity: string; minutes: number; distance: number | null; at: string }[];
@@ -44,6 +47,25 @@ main.log { padding-bottom: 385px; gap: 14px; }
 .tile .meta { color: var(--muted); font-size: 13px; }
 .tile[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .tile .badge { position: absolute; top: 8px; right: 10px; font-size: 12px; font-weight: 700; color: var(--accent); }
+.tile.longevity { border-left: 6px solid var(--longevity); }
+.tile.longevity[aria-pressed="true"] { border-color: var(--longevity); background: var(--longevity-soft); }
+.tile .lg-tag { font-size: 12px; font-weight: 700; color: var(--longevity); }
+.chip.long { border-color: var(--longevity); background: var(--longevity-soft); }
+.iwt { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: var(--card); text-align: center;
+  padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom)); }
+.iwt[hidden] { display: none; }
+.iwt.fast { background: var(--longevity-soft); }
+.iwt-inner { display: grid; gap: 14px; width: 100%; max-width: 420px; }
+.iwt-phase { font-size: 30px; font-weight: 800; letter-spacing: .02em; }
+.iwt.fast .iwt-phase { color: var(--longevity); }
+.iwt-clock { font-size: 88px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+.iwt-round, .iwt-tip { color: var(--muted); font-size: 16px; margin: 0; }
+.iwt-bar { display: grid; grid-auto-flow: column; gap: 4px; }
+.iwt-bar span { height: 8px; border-radius: 4px; background: var(--heat-0); }
+.iwt-bar span.fast { background: color-mix(in srgb, var(--longevity) 35%, transparent); }
+.iwt-bar span.done { background: var(--longevity); }
+.iwt-bar span.done.slow { background: var(--muted); }
+.iwt button { height: 52px; font-size: 17px; font-weight: 700; border-radius: 14px; }
 .tile.add { border-style: dashed; color: var(--muted); align-items: center; }
 .editing .tile:not(.add) { border-color: var(--danger); }
 .editing .tile:not(.add) .badge { color: var(--danger); }
@@ -104,7 +126,10 @@ const data = JSON.parse(document.getElementById("log-data").textContent);
 const DAYS = ["push", "pull", "legs"];
 const LABELS = { push: "Push", pull: "Pull", legs: "Legs", cardio: "Cardio", other: "Other" };
 // Treadmill first: it's the usual one. Activities logged before show up too.
-const DEFAULT_ACTIVITIES = ["treadmill", "exercise bike", "rowing machine", "cross trainer"];
+const DEFAULT_ACTIVITIES = ["treadmill", "interval walk", "exercise bike", "rowing machine", "cross trainer"];
+const TIMED = new RegExp(data.timedPattern);
+const isTimed = (name) => TIMED.test(name);
+const isLongevity = (name) => data.longevity.includes(name) || /\\b(hang|carry)\\b/.test(name);
 const $ = (id) => document.getElementById(id);
 const els = { tabs: $("tabs"), grid: $("grid"), today: $("today"), todayCard: $("today-card"), selected: $("selected"),
   rest: $("rest"), weight: $("weight"), reps: $("reps"), log: $("log"), toast: $("toast"), toastText: $("toast-text"),
@@ -116,12 +141,15 @@ const title = (n) => n.replace(/(^|\\s)(\\S)/g, (m, s, c) => s + c.toUpperCase()
 const norm = (n) => n.trim().replace(/\\s+/g, " ").toLowerCase();
 const fmt = (kg) => String(Math.round(kg * 10) / 10);
 const load = (w, r) => (w > 0 ? fmt(w) + " kg × " + r : "BW × " + r);
+// Timed exercises: the reps number is seconds.
+const loadFor = (name, w, r) => (isTimed(name) ? (w > 0 ? fmt(w) + " kg × " + r + " s" : r + " s") : load(w, r));
 const cardioLoad = (m, d) => fmt(m) + " min" + (d ? " · " + fmt(d) + " km" : "");
 const readNumber = (input) => Number(String(input.value).trim().replace(",", "."));
 
 // Open on the tab asked for in the link, else today's planned day until something is logged, else the last tab used.
 const requested = new URLSearchParams(location.search).get("tab");
 const nothingToday = data.today.length === 0 && data.cardio.today.length === 0;
+const requestedActivity = new URLSearchParams(location.search).get("activity");
 if ([...DAYS, "cardio"].includes(requested)) state.tab = requested;
 else if (nothingToday && !data.doneToday) state.tab = data.plan;
 else { try { const saved = localStorage.getItem("gym-tab"); if (saved) state.tab = saved; } catch {} }
@@ -143,7 +171,7 @@ function activities() {
 }
 const isCardio = () => state.tab === "cardio";
 const targetOf = (name) => (data.exercises.find((e) => e.name === name) || {}).target || null;
-const fmtTarget = (t) => t.sets + " × " + (t.repsMin === t.repsMax ? t.repsMin : t.repsMin + "–" + t.repsMax);
+const fmtTarget = (t, name) => t.sets + " × " + (t.repsMin === t.repsMax ? t.repsMin : t.repsMin + "–" + t.repsMax) + (name && isTimed(name) ? " s" : "");
 
 function el(tag, props, children) {
   const node = Object.assign(document.createElement(tag), props || {});
@@ -179,6 +207,7 @@ function renderCardioGrid() {
       el("span", { className: "meta", textContent: last ? "Last " + cardioLoad(last.minutes, last.distance) : "New" }),
     ]);
     if (count) b.append(el("span", { className: "badge", textContent: "×" + count }));
+    if (isLongevity(name)) { b.classList.add("longevity"); b.append(el("span", { className: "lg-tag", textContent: "🌱 Longevity · 3 min fast / 3 slow" })); }
     b.setAttribute("aria-pressed", String(name === state.cardioSelected));
     b.onclick = () => selectCardio(name);
     return b;
@@ -206,14 +235,16 @@ function renderGrid() {
     const count = setsToday(name);
     const b = el("button", { type: "button", className: "tile" }, [
       el("span", { className: "name", textContent: title(name) }),
-      el("span", { className: "meta", textContent: last ? "Last " + load(last.weight, last.reps) : "New" }),
+      el("span", { className: "meta", textContent: last ? "Last " + loadFor(name, last.weight, last.reps) : "New" }),
     ]);
     const target = targetOf(name);
+    if (isLongevity(name)) b.classList.add("longevity");
     if (state.editing) b.append(el("span", { className: "badge", textContent: "Edit" }));
     else if (target && count >= target.sets) b.append(el("span", { className: "badge done", textContent: "✓ " + count + "/" + target.sets }));
     else if (target && count) b.append(el("span", { className: "badge", textContent: count + "/" + target.sets }));
     else if (count) b.append(el("span", { className: "badge", textContent: "×" + count }));
-    if (target && !state.editing) b.append(el("span", { className: "target", textContent: "Target " + fmtTarget(target) }));
+    if (target && !state.editing) b.append(el("span", { className: "target", textContent: "Target " + fmtTarget(target, name) }));
+    if (isLongevity(name) && !state.editing) b.append(el("span", { className: "lg-tag", textContent: "🌱 Longevity" }));
     if (b.querySelector(".badge")) b.classList.add("has-badge");
     b.setAttribute("aria-pressed", String(!state.editing && name === state.selected));
     b.onclick = () => (state.editing ? editExercise(name) : select(name));
@@ -254,7 +285,7 @@ function renderToday() {
   els.today.replaceChildren(...cardioRows, ...[...groups].map(([name, sets]) => {
     const row = el("div", { className: "today-row" }, [
       el("b", { textContent: title(name) }),
-      el("span", { className: "sets", textContent: sets.map((s) => (s.weight > 0 ? fmt(s.weight) + "×" + s.reps : "BW×" + s.reps)).join(", ") }),
+      el("span", { className: "sets", textContent: sets.map((s) => (isTimed(name) ? (s.weight > 0 ? fmt(s.weight) + "×" + s.reps + "s" : s.reps + "s") : s.weight > 0 ? fmt(s.weight) + "×" + s.reps : "BW×" + s.reps)).join(", ") }),
     ]);
     row.onclick = () => {
       const button = data.exercises.find((e) => e.name === name);
@@ -282,13 +313,20 @@ function chip(text, onTap) {
 }
 function renderHint() {
   if (isCardio()) {
+    if (state.cardioSelected === "interval walk") {
+      const b = chip("▶ 3 × 3 timer", () => startWalk(3, 3, 5));
+      b.classList.add("long");
+      const easy = chip("Easier: 2 fast / 3 slow", () => startWalk(2, 3, 6));
+      easy.classList.add("long");
+      return els.hint.replaceChildren(b, easy);
+    }
     const last = state.cardioSelected && data.cardio.last[state.cardioSelected];
     if (!last) return els.hint.replaceChildren();
     const target = Math.round(last.minutes) + 5;
     return els.hint.replaceChildren("Last time " + cardioLoad(last.minutes, last.distance) + " · try", chip(target + " min", () => { els.minutes.value = String(target); }));
   }
   const previous = state.selected && data.previous[state.selected];
-  if (!previous) return els.hint.replaceChildren(state.selected ? "First time? Pick a weight you can do with good form." : "");
+  if (!previous) return els.hint.replaceChildren(!state.selected ? "" : isTimed(state.selected) ? "First time? Go until your form or grip starts to slip, and log the seconds." : "First time? Pick a weight you can do with good form.");
   // A stall replaces "beat last time" with a deload or a rep-range change, until a session beats the old best.
   const stall = data.stalls[state.selected];
   if (stall && !beatenToday(state.selected)) {
@@ -302,10 +340,11 @@ function renderHint() {
       chip("Switch " + short(stall.switchReps), fill(stall.switchReps)),
     );
   }
-  if (beatenToday(state.selected)) return els.hint.replaceChildren("💪 Beat last time (" + load(previous.weight, previous.reps) + ") today");
+  const L = (w, r) => loadFor(state.selected, w, r);
+  if (beatenToday(state.selected)) return els.hint.replaceChildren("💪 Beat last time (" + L(previous.weight, previous.reps) + ") today");
   els.hint.replaceChildren(
-    "Beat " + load(previous.weight, previous.reps) + ":",
-    ...previous.targets.map((t) => chip(load(t.weight, t.reps), () => { els.weight.value = fmt(t.weight); els.reps.value = String(t.reps); })),
+    "Beat " + L(previous.weight, previous.reps) + ":",
+    ...previous.targets.map((t) => chip(L(t.weight, t.reps), () => { els.weight.value = fmt(t.weight); els.reps.value = String(t.reps); })),
   );
 }
 
@@ -319,7 +358,7 @@ function renderPanel() {
   const target = !cardio && selected ? targetOf(selected) : null;
   if (target) {
     const done = setsToday(selected);
-    els.targetInfo.textContent = fmtTarget(target) + " · " + (done >= target.sets ? "done ✓" : "set " + (done + 1) + " of " + target.sets);
+    els.targetInfo.textContent = fmtTarget(target, selected) + " · " + (done >= target.sets ? "done ✓" : "set " + (done + 1) + " of " + target.sets);
   }
   els.targetInfo.hidden = !target;
   els.progress.hidden = cardio || !selected;
@@ -333,8 +372,13 @@ function render() { renderTabs(); renderGrid(); renderPanel(); }
 function select(name) {
   state.selected = name;
   const last = data.last[name];
-  els.weight.value = last ? fmt(last.weight) : "20";
-  els.reps.value = last ? String(last.reps) : "10";
+  const timed = isTimed(name);
+  els.weight.value = last ? fmt(last.weight) : timed && !/\\bcarry\\b/.test(name) ? "0" : "20";
+  els.reps.value = last ? String(last.reps) : timed ? "30" : "10";
+  // Timed exercises count seconds, 5 at a time.
+  $("reps-unit").textContent = timed ? "sec" : "reps";
+  $("reps-minus").dataset.step = timed ? "-5" : "-1";
+  $("reps-plus").dataset.step = timed ? "5" : "1";
   render();
 }
 
@@ -509,8 +553,71 @@ async function removeExercise(name) {
   }
 }
 
+// Japanese interval walking: alternate easy and fast walking (easy first, as a warm-up), with a beep at each change.
+// Time comes from the clock, so it stays right if the screen locks (the beeps can't play while it's locked).
+const walk = { timer: null, start: 0, plan: null, wake: null, audio: null, phase: -1 };
+function beep(times) {
+  try {
+    const ctx = walk.audio;
+    for (let i = 0; i < times; i++) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+      const t = ctx.currentTime + i * 0.35;
+      g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      o.start(t); o.stop(t + 0.26);
+    }
+  } catch {}
+}
+function walkPhases() {
+  const phases = [];
+  for (let i = 0; i < walk.plan.rounds; i++) phases.push({ kind: "slow", sec: walk.plan.slow * 60 }, { kind: "fast", sec: walk.plan.fast * 60 });
+  return phases;
+}
+function startWalk(fast, slow, rounds) {
+  walk.plan = { fast, slow, rounds };
+  walk.start = Date.now();
+  walk.phase = -1;
+  try { walk.audio = walk.audio || new (window.AudioContext || window.webkitAudioContext)(); walk.audio.resume(); } catch {}
+  if (navigator.wakeLock) navigator.wakeLock.request("screen").then((l) => (walk.wake = l)).catch(() => {});
+  $("iwt").hidden = false;
+  $("iwt-bar").replaceChildren(...walkPhases().map((p) => el("span", { className: p.kind })));
+  tickWalk();
+  walk.timer = setInterval(tickWalk, 250);
+}
+function tickWalk() {
+  const phases = walkPhases();
+  const elapsed = (Date.now() - walk.start) / 1000;
+  let t = elapsed, i = 0;
+  while (i < phases.length && t >= phases[i].sec) { t -= phases[i].sec; i++; }
+  const bars = $("iwt-bar").children;
+  for (let k = 0; k < bars.length; k++) bars[k].classList.toggle("done", k < i);
+  const total = Math.floor(elapsed / 60) + ":" + String(Math.floor(elapsed % 60)).padStart(2, "0");
+  if (i >= phases.length) return endWalk(true);
+  if (i !== walk.phase) { if (walk.phase >= 0) beep(phases[i].kind === "fast" ? 2 : 1); walk.phase = i; }
+  const p = phases[i], left = Math.ceil(p.sec - t);
+  $("iwt").classList.toggle("fast", p.kind === "fast");
+  $("iwt-phase").textContent = p.kind === "fast" ? "FAST" : "Easy";
+  $("iwt-clock").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+  $("iwt-round").textContent = "Round " + (Math.floor(i / 2) + 1) + " of " + walk.plan.rounds + " · " + total + " total";
+  $("iwt-tip").textContent = p.kind === "fast"
+    ? "About 70% effort: breathing hard, can say a few words. Raise the speed or incline."
+    : "Easy pace: you could hold a conversation.";
+}
+function endWalk(finished) {
+  clearInterval(walk.timer);
+  if (walk.wake) { walk.wake.release().catch(() => {}); walk.wake = null; }
+  const minutes = Math.max(1, Math.round((Date.now() - walk.start) / 60000));
+  $("iwt").hidden = true;
+  $("iwt").classList.remove("fast");
+  if (finished) beep(3);
+  els.minutes.value = String(minutes);
+  toast((finished ? "Interval walk done 🌱 " : "Stopped at ") + minutes + " min. Tap Log cardio to save it.");
+}
+$("iwt-stop").onclick = () => endWalk(false);
+
 renderToday();
-if (isCardio()) selectCardio(activities()[0]);
+if (requestedActivity && isCardio()) { if (!activities().includes(requestedActivity)) state.extraActivities.push(requestedActivity); selectCardio(requestedActivity); }
+else if (isCardio()) selectCardio(activities()[0]);
 else render();
 `;
 
@@ -560,9 +667,9 @@ export function logPage(data: LogPageData) {
               <button type="button" data-step="2.5" data-target="weight" aria-label="More weight">+</button>
             </div>
             <div class="stepper">
-              <button type="button" data-step="-1" data-target="reps" aria-label="Fewer reps">−</button>
-              <label><input id="reps" type="text" inputmode="numeric" value="10" data-min="1" autocomplete="off" /><small>reps</small></label>
-              <button type="button" data-step="1" data-target="reps" aria-label="More reps">+</button>
+              <button type="button" id="reps-minus" data-step="-1" data-target="reps" aria-label="Fewer reps">−</button>
+              <label><input id="reps" type="text" inputmode="numeric" value="10" data-min="1" autocomplete="off" /><small id="reps-unit">reps</small></label>
+              <button type="button" id="reps-plus" data-step="1" data-target="reps" aria-label="More reps">+</button>
             </div>
           </div>
           <div class="steppers" id="cardio-steppers" hidden>
@@ -578,6 +685,17 @@ export function logPage(data: LogPageData) {
             </div>
           </div>
           <button type="button" class="primary log-button" id="log" disabled>Log set</button>
+        </div>
+      </div>
+
+      <div class="iwt" id="iwt" role="timer" aria-live="polite" hidden>
+        <div class="iwt-inner">
+          <div class="iwt-phase" id="iwt-phase">Easy</div>
+          <div class="iwt-clock" id="iwt-clock">3:00</div>
+          <p class="iwt-round" id="iwt-round"></p>
+          <div class="iwt-bar" id="iwt-bar" aria-hidden="true"></div>
+          <p class="iwt-tip" id="iwt-tip"></p>
+          <button type="button" class="primary" id="iwt-stop">Stop and fill in the minutes</button>
         </div>
       </div>
 

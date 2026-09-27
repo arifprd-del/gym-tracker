@@ -49,8 +49,23 @@ export function weekStart(day: string): string {
   return addDays(day, -((weekday + 6) % 7));
 }
 
-export function volume(sets: Pick<SetRow, "weight_kg" | "reps">[]): number {
-  return sets.reduce((sum, s) => sum + s.weight_kg * s.reps, 0);
+// Timed exercises (hangs, carries, planks, holds) store seconds in the reps column. They're matched by name, so one
+// you add yourself counts too. The pattern is shared with the log screen's script.
+export const TIMED_PATTERN = "\\b(hang|hangs|carry|carries|plank|hold|wall sit)\\b";
+const TIMED = new RegExp(TIMED_PATTERN);
+export function isTimed(exercise: string): boolean {
+  return TIMED.test(exercise);
+}
+
+/** Longevity exercises (hangs, carries, jumps, interval walking): shown in their own colour. */
+export const LONGEVITY_EXERCISES = ["dead hang", "farmers carry", "suitcase carry", "pogo hops", "broad jump", "interval walk"];
+export function isLongevity(name: string): boolean {
+  return LONGEVITY_EXERCISES.includes(name) || /\b(hang|carry)\b/.test(name);
+}
+
+/** Weight × reps, leaving out timed sets (weight × seconds isn't volume). */
+export function volume(sets: (Pick<SetRow, "weight_kg" | "reps"> & { exercise?: string })[]): number {
+  return sets.reduce((sum, s) => sum + (s.exercise && isTimed(s.exercise) ? 0 : s.weight_kg * s.reps), 0);
 }
 
 export type DaySummary = { sets: number; volumeKg: number; exercises: { exercise: string; sets: number; topKg: number }[] };
@@ -66,8 +81,9 @@ export function summarizeSets(sets: SetRow[]): DaySummary {
   return { sets: sets.length, volumeKg: volume(sets), exercises: [...byExercise.values()] };
 }
 
-/** "82.5 kg × 5", or "12 reps" for bodyweight sets. */
-export function formatLoad(set: Pick<SetRow, "weight_kg" | "reps">): string {
+/** "82.5 kg × 5", "12 reps" for bodyweight sets, "45 s" or "24 kg × 45 s" for timed exercises. */
+export function formatLoad(set: Pick<SetRow, "weight_kg" | "reps"> & { exercise?: string }): string {
+  if (set.exercise && isTimed(set.exercise)) return set.weight_kg > 0 ? `${formatKg(set.weight_kg)} kg × ${set.reps} s` : `${set.reps} s`;
   return set.weight_kg > 0 ? `${formatKg(set.weight_kg)} kg × ${set.reps}` : `${set.reps} reps`;
 }
 
@@ -129,7 +145,7 @@ export function weeklyVolumeByDay(
   for (let i = weeks - 1; i >= 0; i--) totals.set(addDays(thisWeek, -7 * i), emptyByDay());
   for (const s of sets) {
     const week = totals.get(weekStart(localDay(s.performed_at, timeZone)));
-    if (week) week[dayOf(s.exercise)] += s.weight_kg * s.reps;
+    if (week && !isTimed(s.exercise)) week[dayOf(s.exercise)] += s.weight_kg * s.reps;
   }
   return [...totals].map(([week, byDay]) => ({
     week,
@@ -281,6 +297,7 @@ export function todaysPlan(days: Map<string, TrainingDay>, today: string): { nex
 export type ChecklistItem = { key: string; label: string; done: boolean; detail: string };
 
 export const BRAIN_DAYS_GOAL = 5;
+export const MOBILITY_DAYS_GOAL = 5;
 
 /** This week's (Monday to Sunday) goals: each split day once, the cardio minutes goal, a weigh-in and brain training. */
 export function weeklyChecklist(input: {
@@ -289,6 +306,7 @@ export function weeklyChecklist(input: {
   cardioGoalMinutes: number;
   weighedInThisWeek: boolean;
   brainDaysThisWeek: number;
+  mobilityDaysThisWeek: number;
   today: string;
 }): ChecklistItem[] {
   const thisWeek = weekStart(input.today);
@@ -315,6 +333,12 @@ export function weeklyChecklist(input: {
     label: "Brain",
     done: input.brainDaysThisWeek >= BRAIN_DAYS_GOAL,
     detail: `${input.brainDaysThisWeek}/${BRAIN_DAYS_GOAL} days`,
+  });
+  items.push({
+    key: "mobility",
+    label: "Mobility",
+    done: input.mobilityDaysThisWeek >= MOBILITY_DAYS_GOAL,
+    detail: `${input.mobilityDaysThisWeek}/${MOBILITY_DAYS_GOAL} days`,
   });
   return items;
 }
@@ -375,8 +399,10 @@ export function beats(set: { weight: number; reps: number }, previous: { weight:
 export function beatTargets(
   previous: { weight: number; reps: number },
   target?: { repsMin: number; repsMax: number } | null,
+  timed = false,
 ): { weight: number; reps: number }[] {
-  const moreReps = { weight: previous.weight, reps: previous.reps + 1 };
+  // Timed exercises go up 5 seconds at a time.
+  const moreReps = { weight: previous.weight, reps: previous.reps + (timed ? 5 : 1) };
   if (previous.weight === 0) return [moreReps];
   const heavier = Math.round((previous.weight + (previous.weight >= 20 ? 2.5 : 1)) * 10) / 10;
   if (target && previous.reps >= target.repsMax) return [{ weight: heavier, reps: target.repsMin }, moreReps];
@@ -510,7 +536,8 @@ export function exerciseSessions(sets: SetRow[], timeZone: string): ExerciseSess
         sets: daySets.map((s) => ({ weight: s.weight_kg, reps: s.reps })),
         topWeight,
         bestReps: Math.max(...daySets.filter((s) => s.weight_kg === topWeight).map((s) => s.reps)),
-        bestE1rm: Math.max(...daySets.map((s) => estimateOneRepMax(s.weight_kg, s.reps))),
+        // Timed exercises have no 1RM: use the heaviest weight carried (bodyweight hangs use their seconds as "reps").
+        bestE1rm: isTimed(daySets[0].exercise) ? topWeight : Math.max(...daySets.map((s) => estimateOneRepMax(s.weight_kg, s.reps))),
         volumeKg: volume(daySets),
         // The first session is a baseline, not a record; bodyweight moves count reps instead of weight.
         record: bestSoFar >= 0 && (topWeight > 0 ? topWeight > bestSoFar : false),
@@ -602,6 +629,7 @@ export function stallsByExercise(sets: SetRow[], timeZone: string, today: string
   for (const s of sets) byExercise.set(s.exercise, [...(byExercise.get(s.exercise) ?? []), s]);
   const stalls = new Map<string, Stall>();
   for (const [exercise, rows] of byExercise) {
+    if (isTimed(exercise)) continue; // deload and rep-range advice doesn't fit hangs and carries
     const stall = detectStall(exerciseSessions(rows, timeZone), today);
     if (stall) stalls.set(exercise, stall);
   }
@@ -629,6 +657,7 @@ export type WeekRecap = {
   brain?: { days: number; goal: number };
   sleep?: { averageMinutes: number | null; nights: number };
   protein?: { averageG: number | null; daysLogged: number; daysAtTarget: number; target: number | null };
+  longevity?: { mobilityDays: number; mobilityGoal: number; intervalWalks: number; intervalWalksGoal: number };
 };
 
 export function weekRecap(input: {
@@ -666,7 +695,7 @@ export function weekRecap(input: {
   for (const [exercise, rows] of byExercise) {
     const sessions = exerciseSessions(rows, timeZone);
     for (const s of sessions) if (s.record && inWeek(s.day)) records.push({ exercise, weight: s.topWeight, reps: s.bestReps, day: s.day });
-    if (sessions.some((s) => inWeek(s.day)) && detectStall(sessions, end)) stalled.push(exercise);
+    if (sessions.some((s) => inWeek(s.day)) && !isTimed(exercise) && detectStall(sessions, end)) stalled.push(exercise);
   }
   records.sort((a, b) => a.day.localeCompare(b.day) || a.exercise.localeCompare(b.exercise));
 
