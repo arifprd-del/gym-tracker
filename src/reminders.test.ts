@@ -33,6 +33,8 @@ test("reminder messages only when something is left to do", () => {
     brainStreak: 4,
     weighedInThisWeek: false,
     brainCheckDue: true,
+    bpThisWeek: true,
+    fitnessCheckDue: false,
     mobilityDoneToday: false,
     mobilityStreak: 3,
   };
@@ -53,7 +55,10 @@ test("reminder messages only when something is left to do", () => {
     tag: "mobility",
   });
   assert.equal(reminderMessage("mobility", { ...s, mobilityDoneToday: true }), null);
-  assert.deepEqual(reminderMessage("weekly", s), { title: "Weekly check-in", body: "Still to do this week: weigh in and do the Brain Check (3 min).", url: "/#body-weight", tag: "weekly" });
-  assert.equal(reminderMessage("weekly", { ...s, weighedInThisWeek: true })!.url, "/brain#check");
+  assert.deepEqual(reminderMessage("weekly", s), { title: "Weekly check-in", body: "Still to do this week: weigh in and do the Brain Check (3 min).", url: "/today", tag: "weekly" });
+  assert.equal(
+    reminderMessage("weekly", { ...s, bpThisWeek: false, fitnessCheckDue: true })!.body,
+    "Still to do this week: weigh in, check your blood pressure, do the Brain Check (3 min) and do the monthly longevity check.",
+  );
   assert.equal(reminderMessage("weekly", { ...s, weighedInThisWeek: true, brainCheckDue: false }), null);
 });

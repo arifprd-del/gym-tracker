@@ -50,6 +50,7 @@ import {
   weeklyChecklist,
   BRAIN_DAYS_GOAL,
   isTimed,
+  daysAgo,
   LONGEVITY_EXERCISES,
   MOBILITY_DAYS_GOAL,
   TIMED_PATTERN,
@@ -80,6 +81,9 @@ import { brainPage } from "./brain-page";
 import { sleepInsights } from "./insights";
 import { INTERVAL_WALK, INTERVAL_WALKS_GOAL, MOBILITY_ITEMS, mobilityDays, type MobilityItem } from "./longevity";
 import { longevityPage } from "./longevity-page";
+import { FITNESS_TESTS, fitnessCheckDue, type FitnessTest } from "./health";
+import { healthPage } from "./health-page";
+import { todayPage } from "./today-page";
 import { isPushEndpoint, loadVapidKeys, sendPush, type PushSubscription } from "./push";
 import { dueRules, isTime, localClock, REMINDER_KEYS, reminderMessage, type ReminderKey, type ReminderRule, type ReminderState } from "./reminders";
 import { remindersPage } from "./reminders-page";
@@ -496,7 +500,7 @@ app.get("/manifest.webmanifest", (c) =>
     {
       name: "Arif Gym Tracker",
       short_name: "Arif Gym",
-      start_url: "/log",
+      start_url: "/today",
       display: "standalone",
       background_color: "#0f1115",
       theme_color: "#0f1115",
@@ -883,6 +887,184 @@ app.get("/longevity", async (c) => {
   );
 });
 
+// Today: everything due today on one screen.
+app.get("/today", async (c) => {
+  const timeZone = c.env.TIMEZONE;
+  const now = new Date();
+  const today = localDay(now, timeZone);
+  const thisWeek = weekStart(today);
+  const since = new Date(`${addDays(today, -61)}T00:00:00Z`).toISOString();
+  const weekSince = new Date(`${addDays(thisWeek, -1)}T00:00:00Z`).toISOString();
+  const [sets, cardio, exercises, mobilityRows, rounds, lastCheck, protein, latestWeight, weighIn, sleepRow, stepsRow, bp, waistRow, tests] = await Promise.all([
+    c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ?").bind(since).all<SetRow>(),
+    c.env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ?").bind(since).all<CardioRow>(),
+    c.env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
+    c.env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ?").bind(addDays(today, -61)).all<{ day: string; item: string }>(),
+    c.env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ?").bind(since).all<{ performed_at: string }>(),
+    c.env.DB.prepare("SELECT performed_at FROM brain_checks ORDER BY performed_at DESC LIMIT 1").first<{ performed_at: string }>(),
+    c.env.DB.prepare("SELECT * FROM protein WHERE logged_at >= ?").bind(new Date(`${addDays(today, -1)}T00:00:00Z`).toISOString()).all<ProteinRow>(),
+    c.env.DB.prepare("SELECT weight_kg FROM body_weight ORDER BY measured_on DESC LIMIT 1").first<{ weight_kg: number }>(),
+    c.env.DB.prepare("SELECT 1 AS ok FROM body_weight WHERE measured_on >= ? AND measured_on <= ?").bind(thisWeek, today).first(),
+    c.env.DB.prepare("SELECT minutes FROM sleep WHERE day = ?").bind(today).first<{ minutes: number }>(),
+    c.env.DB.prepare("SELECT steps FROM steps WHERE day = ?").bind(addDays(today, -1)).first<{ steps: number }>(),
+    c.env.DB.prepare("SELECT measured_at FROM blood_pressure WHERE measured_at >= ?").bind(weekSince).all<{ measured_at: string }>(),
+    c.env.DB.prepare("SELECT 1 AS ok FROM waist WHERE day >= ? AND day <= ?").bind(thisWeek, today).first(),
+    c.env.DB.prepare("SELECT test, MAX(day) AS day FROM fitness_tests GROUP BY test").all<{ test: FitnessTest; day: string }>(),
+  ]);
+  const days = trainingDaysByType(sets.results, dayLookup(exercises.results), timeZone);
+  const cardioDays = cardioMinutesPerDay(cardio.results, timeZone);
+  const activeDays = new Set([...days.keys(), ...cardioDays.keys()]);
+  const plan = todaysPlan(days, today);
+  const lastOfNext = lastTrained(days)[plan.next];
+  const mobility = mobilityDays(mobilityRows.results);
+  const roundDays = rounds.results.map((r) => localDay(r.performed_at, timeZone));
+  const weekCardio = cardio.results.filter((r) => localDay(r.performed_at, timeZone) >= thisWeek);
+  return c.html(
+    todayPage({
+      dateLabel: now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone }),
+      workout: {
+        doneToday: plan.doneToday,
+        setsToday: sets.results.filter((s) => localDay(s.performed_at, timeZone) === today).length,
+        next: plan.next,
+        lastOfNextAgo: lastOfNext ? daysAgo(lastOfNext, today).toLowerCase() : null,
+        nudge: habitNudge({ activeDays, weekStreak: weekStreak(activeDays, today), today, next: plan.next }),
+      },
+      mobility: {
+        done: new Set(mobilityRows.results.filter((r) => r.day === today && r.item !== "hang").map((r) => r.item)).size,
+        total: 3,
+        streak: dayStreak(mobility, today),
+      },
+      brain: { rounds: roundDays.filter((d) => d === today).length, streak: dayStreak(roundDays, today) },
+      protein: {
+        today: proteinByDay(protein.results, timeZone).get(today) ?? 0,
+        target: proteinTarget(latestWeight?.weight_kg, proteinPerKg(c.env)) ?? PROTEIN_FALLBACK_G,
+      },
+      cardio: {
+        weekMinutes: weekCardio.reduce((sum, r) => sum + r.minutes, 0),
+        goal: cardioGoal(c.env),
+        walks: weekCardio.filter((r) => r.activity === INTERVAL_WALK).length,
+        walksGoal: INTERVAL_WALKS_GOAL,
+      },
+      sleepLastNight: sleepRow?.minutes ?? null,
+      stepsYesterday: stepsRow?.steps ?? null,
+      week: {
+        weighedIn: Boolean(weighIn),
+        bpThisWeek: bp.results.some((r) => localDay(r.measured_at, timeZone) >= thisWeek),
+        waistThisWeek: Boolean(waistRow),
+        brainCheckDue: brainCheckDue(lastCheck ? localDay(lastCheck.performed_at, timeZone) : null, today),
+        fitnessCheckDue: fitnessCheckDue(Object.fromEntries(tests.results.map((t) => [t.test, t.day])), today),
+      },
+    }),
+  );
+});
+
+// Health: the monthly longevity check, blood pressure and waist.
+app.get("/health", async (c) => {
+  const timeZone = c.env.TIMEZONE;
+  const today = localDay(new Date(), timeZone);
+  const [tests, bp, waist, height] = await Promise.all([
+    c.env.DB.prepare("SELECT id, day, test, value FROM fitness_tests ORDER BY day, id").all<{ id: number; day: string; test: FitnessTest; value: number }>(),
+    c.env.DB.prepare("SELECT * FROM blood_pressure ORDER BY measured_at DESC LIMIT 200").all<{ id: number; measured_at: string; systolic: number; diastolic: number; pulse: number | null }>(),
+    c.env.DB.prepare("SELECT day, cm FROM waist ORDER BY day").all<{ day: string; cm: number }>(),
+    c.env.DB.prepare("SELECT value FROM settings WHERE key = 'height_cm'").first<{ value: string }>(),
+  ]);
+  const byTest = Object.fromEntries(FITNESS_TESTS.map((t) => [t, tests.results.filter((r) => r.test === t)])) as unknown as Record<FitnessTest, { id: number; day: string; value: number }[]>;
+  // Blood pressure as weekly averages, so a single high or low reading doesn't dominate.
+  const weeks = new Map<string, { s: number; d: number; n: number }>();
+  for (const r of bp.results) {
+    const wk = weekStart(localDay(r.measured_at, timeZone));
+    const w = weeks.get(wk) ?? { s: 0, d: 0, n: 0 };
+    weeks.set(wk, { s: w.s + r.systolic, d: w.d + r.diastolic, n: w.n + 1 });
+  }
+  const saved = c.req.query("saved");
+  const error = c.req.query("error");
+  return c.html(
+    healthPage({
+      today,
+      checkDue: fitnessCheckDue(Object.fromEntries(FITNESS_TESTS.filter((t) => byTest[t].length).map((t) => [t, byTest[t].at(-1)!.day])), today),
+      tests: byTest,
+      bp: bp.results.map((r) => ({
+        id: r.id,
+        day: localDay(r.measured_at, timeZone),
+        time: new Date(r.measured_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }),
+        systolic: r.systolic,
+        diastolic: r.diastolic,
+        pulse: r.pulse,
+      })),
+      bpWeekly: [...weeks].sort(([a], [b]) => a.localeCompare(b)).slice(-26).map(([week, w]) => ({ week, systolic: Math.round(w.s / w.n), diastolic: Math.round(w.d / w.n) })),
+      waist: waist.results,
+      heightCm: height ? Number(height.value) : null,
+      saved: saved && saved.length <= 60 ? saved : null,
+      error: error && error.length <= 80 ? error : null,
+    }),
+  );
+});
+
+const numberField = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? Number(v.trim().replace(",", ".")) : NaN);
+const back = (c: Context, anchor: string, saved: string) => c.redirect(`/health?saved=${encodeURIComponent(saved)}#${anchor}`, 303);
+const backError = (c: Context, anchor: string, error: string) => c.redirect(`/health?error=${encodeURIComponent(error)}#${anchor}`, 303);
+
+app.post("/health/test", async (c) => {
+  const body = await c.req.parseBody();
+  const test = body.test;
+  const today = localDay(new Date(), c.env.TIMEZONE);
+  let value: number;
+  if (test === "sit_rise") {
+    const down = numberField(body.down), up = numberField(body.up);
+    if (!(down >= 0 && down <= 5 && up >= 0 && up <= 5)) return backError(c, "t-sit_rise", "Enter 0 to 5 for each");
+    value = Math.round((down + up) * 2) / 2;
+  } else if (test === "hang") {
+    value = Math.round(numberField(body.value));
+    if (!(value >= 1 && value <= 600)) return backError(c, "t-hang", "Enter the seconds");
+  } else if (test === "cooper") {
+    value = Math.round(numberField(body.value) * 100) / 100;
+    if (!(value >= 0.5 && value <= 6)) return backError(c, "t-cooper", "Enter km, e.g. 2.2");
+  } else return c.text("Unknown test", 400);
+  await c.env.DB.prepare("INSERT INTO fitness_tests (day, test, value) VALUES (?, ?, ?)").bind(today, test, value).run();
+  return back(c, `t-${test}`, test === "sit_rise" ? `${value}/10` : test === "hang" ? `${value} s` : `${value} km`);
+});
+
+app.post("/health/bp", async (c) => {
+  const body = await c.req.parseBody();
+  const systolic = Math.round(numberField(body.systolic)), diastolic = Math.round(numberField(body.diastolic));
+  const pulseRaw = numberField(body.pulse);
+  const pulse = Number.isFinite(pulseRaw) ? Math.round(pulseRaw) : null;
+  if (!(systolic >= 60 && systolic <= 260 && diastolic >= 30 && diastolic <= 160 && systolic > diastolic) || (pulse !== null && !(pulse >= 25 && pulse <= 220))) {
+    return backError(c, "bp", "Check the numbers (top is the bigger one)");
+  }
+  await c.env.DB.prepare("INSERT INTO blood_pressure (systolic, diastolic, pulse) VALUES (?, ?, ?)").bind(systolic, diastolic, pulse).run();
+  return back(c, "bp", `${systolic}/${diastolic}`);
+});
+
+app.post("/health/bp/:id/delete", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (Number.isInteger(id)) await c.env.DB.prepare("DELETE FROM blood_pressure WHERE id = ?").bind(id).run();
+  return c.redirect("/health#bp", 303);
+});
+
+async function saveHeight(db: D1Database, value: unknown): Promise<boolean> {
+  const height = numberField(value);
+  if (!(height >= 120 && height <= 230)) return false;
+  await db.prepare("INSERT INTO settings (key, value) VALUES ('height_cm', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(String(Math.round(height))).run();
+  return true;
+}
+
+app.post("/health/waist", async (c) => {
+  const body = await c.req.parseBody();
+  const cm = Math.round(numberField(body.cm) * 10) / 10;
+  if (!(cm >= 40 && cm <= 200)) return backError(c, "waist", "Enter your waist in cm");
+  if (body.height !== undefined && !(await saveHeight(c.env.DB, body.height))) return backError(c, "waist", "Enter your height in cm");
+  await c.env.DB.prepare("INSERT INTO waist (day, cm) VALUES (?, ?) ON CONFLICT (day) DO UPDATE SET cm = excluded.cm")
+    .bind(localDay(new Date(), c.env.TIMEZONE), cm)
+    .run();
+  return back(c, "waist", `${cm} cm`);
+});
+
+app.post("/health/height", async (c) => {
+  const body = await c.req.parseBody();
+  return (await saveHeight(c.env.DB, body.height)) ? back(c, "waist", "height") : backError(c, "waist", "Enter your height in cm");
+});
+
 const INSIGHT_DAYS = 180;
 
 // Brain training: Quick Glance speed rounds, the weekly Brain Check and last night's sleep.
@@ -1102,6 +1284,11 @@ async function loadReminderState(env: Env, today: string): Promise<ReminderState
     brainStreak: dayStreak(roundDays, today),
     weighedInThisWeek: Boolean(weighIn),
     brainCheckDue: brainCheckDue(lastCheck ? localDay(lastCheck.performed_at, timeZone) : null, today),
+    bpThisWeek: Boolean(await env.DB.prepare("SELECT 1 AS ok FROM blood_pressure WHERE measured_at >= ?").bind(new Date(`${addDays(thisWeek, -1)}T00:00:00Z`).toISOString()).first()),
+    fitnessCheckDue: fitnessCheckDue(
+      Object.fromEntries((await env.DB.prepare("SELECT test, MAX(day) AS day FROM fitness_tests GROUP BY test").all<{ test: FitnessTest; day: string }>()).results.map((t) => [t.test, t.day])),
+      today,
+    ),
     mobilityDoneToday: mobility.has(today),
     mobilityStreak: dayStreak(mobility, today),
   };

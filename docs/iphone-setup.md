@@ -133,3 +133,10 @@ To turn them on (iOS 16.4 or later):
 Change the times and days on the same page and tap **Save reminders**. Times are UK time (`TIMEZONE`) and a reminder
 can arrive up to 15 minutes late. It's skipped if more than 3 hours late. To stop them on a phone, tap **Turn off on
 this phone**, or turn off Arif Gym in **Settings → Notifications**.
+
+## Today screen
+
+The app now opens on **Today**, a checklist of everything due. If your Home Screen icon still opens the Log screen,
+it was added before this change: remove it (press and hold → Remove Bookmark), then in Safari open the tracker and
+**Share → Add to Home Screen** again. Notifications need turning on again after re-adding (Reminders → Turn on
+notifications).

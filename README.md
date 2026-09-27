@@ -10,6 +10,10 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
 
 ## What it does
 
+- **Today (`/today`):** the Home Screen app opens here. It shows today's workout (next in the rotation, or done with a
+  summary link), the mobility routine, brain training, protein with + buttons, interval walks this week, last night's
+  sleep, yesterday's steps and cardio minutes. Below that are the week's open items: weigh-in, blood pressure and
+  waist, the Brain Check and the monthly longevity check. Each is one tap away.
 - **Tap-to-log screen (`/log`):** Push / Pull / Legs tabs with big exercise buttons. Weight and reps are pre-filled from
   your last set of that exercise, with +/− buttons (2.5 kg / 1 rep). One tap on **Log set** saves it with the current
   date and time. It also has undo, a rest timer and today's sets, and you can add or remove exercises in each tab.
@@ -79,6 +83,10 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
     broad jumps start Legs day.
   - The page also shows this week's interval walks, hang/carry and jump sessions, the best dead hang, and
     beginner / intermediate / advanced steps for all 7.
+- **Health check (`/health`):** the monthly longevity check (sit-to-stand score 0–10, max dead hang with a stopwatch,
+  12-minute treadmill test with estimated VO₂max), weekly home blood pressure (NHS bands, weekly-average chart with
+  the 135/85 home limit) and waist with waist-to-height ratio (NICE bands). The weekly reminder includes whatever is
+  due. It's for tracking, not diagnosis.
 - **CSV export:** one file with every set, cardio session, weigh-in and protein entry (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and

@@ -658,7 +658,8 @@ export function dashboardPage(data: DashboardData): Html {
       <header>
         <h1>Arif Gym Tracker</h1>
         <div class="row">
-          <a class="button primary" href="/log">Log a set</a>
+          <a class="button primary" href="/today">Today</a>
+          <a class="button" href="/log">Log a set</a>
           <a class="button" href="/brain">Brain</a>
           <a class="button" href="/longevity" style="border-color: var(--longevity); color: var(--longevity)">🌱 Longevity</a>
           <a class="button" href="/reminders">Reminders</a>

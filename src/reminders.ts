@@ -48,6 +48,8 @@ export type ReminderState = {
   brainStreak: number;
   weighedInThisWeek: boolean;
   brainCheckDue: boolean;
+  bpThisWeek: boolean;
+  fitnessCheckDue: boolean;
   mobilityDoneToday: boolean;
   mobilityStreak: number;
 };
@@ -77,12 +79,18 @@ export function reminderMessage(key: ReminderKey, s: ReminderState): ReminderMes
     const streak = s.mobilityStreak > 0 ? ` Keep your ${s.mobilityStreak}-day streak going.` : "";
     return { title: "Mobility 🌱", body: `6 minutes: squat hold, World's Greatest Stretch, pogo hops.${streak}`, url: "/longevity", tag: "mobility" };
   }
-  const todo = [!s.weighedInThisWeek && "weigh in", s.brainCheckDue && "do the Brain Check (3 min)"].filter(Boolean) as string[];
+  const todo = [
+    !s.weighedInThisWeek && "weigh in",
+    !s.bpThisWeek && "check your blood pressure",
+    s.brainCheckDue && "do the Brain Check (3 min)",
+    s.fitnessCheckDue && "do the monthly longevity check",
+  ].filter(Boolean) as string[];
   if (todo.length === 0) return null;
+  const list = todo.length > 1 ? `${todo.slice(0, -1).join(", ")} and ${todo.at(-1)}` : todo[0];
   return {
     title: "Weekly check-in",
-    body: `Still to do this week: ${todo.join(" and ")}.`,
-    url: s.weighedInThisWeek ? "/brain#check" : "/#body-weight",
+    body: `Still to do this week: ${list}.`,
+    url: "/today",
     tag: "weekly",
   };
 }

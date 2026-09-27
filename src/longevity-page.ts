@@ -95,7 +95,7 @@ export function longevityPage(d: LongevityPageData): Html {
     html`<main class="longevity-page">
       <header>
         <h1>🌱 Longevity</h1>
-        <div class="row"><a class="button" href="/log">Log</a><a class="button primary" href="/">Dashboard</a></div>
+        <div class="row"><a class="button" href="/health">Health check</a><a class="button primary" href="/today">Today</a></div>
       </header>
 
       <section class="lg-status" aria-label="Summary">

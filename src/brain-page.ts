@@ -421,7 +421,7 @@ export function brainPage(d: BrainPageData): Html {
         <h1>Brain</h1>
         <div class="row">
           <a class="button" href="/log">Log</a>
-          <a class="button primary" href="/">Dashboard</a>
+          <a class="button primary" href="/today">Today</a>
         </div>
       </header>
 
