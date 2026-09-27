@@ -821,6 +821,7 @@ app.get("/longevity", async (c) => {
         jumpSessions: sessionDays(/\b(pogo|jump|jumps|hops)\b/),
       },
       bestHangSeconds: bestHang?.s ?? null,
+      todayHangs: sets.results.filter((s) => s.exercise === "dead hang" && localDay(s.performed_at, timeZone) === today).sort((a, b) => a.performed_at.localeCompare(b.performed_at)).map((s) => s.reps),
     }),
   );
 });

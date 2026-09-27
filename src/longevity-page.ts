@@ -22,9 +22,10 @@ export type LongevityPageData = {
     jumpSessions: number;
   };
   bestHangSeconds: number | null;
+  todayHangs: number[]; // seconds of each dead hang logged today
 };
 
-const ITEMS: { key: MobilityItem; title: string; how: string; timer?: number[]; bonus?: boolean }[] = [
+const ITEMS: { key: MobilityItem; title: string; how: string; timer?: number[]; stopwatch?: boolean; bonus?: boolean }[] = [
   {
     key: "squat",
     title: "Deep squat hold",
@@ -44,8 +45,8 @@ const ITEMS: { key: MobilityItem; title: string; how: string; timer?: number[]; 
   {
     key: "hang",
     title: "Dead hang (bonus)",
-    how: "Hang from a bar, ribs down, neck long. Feet on a chair if needed. A dead hang logged at the gym counts.",
-    timer: [0.5, 1, 2],
+    how: "Start the stopwatch, hang (ribs down, neck long), and stop it when you let go. It beeps every 10 seconds. Feet on a chair takes some weight off. Short hangs add up: try 3.",
+    stopwatch: true,
     bonus: true,
   },
 ];
@@ -89,7 +90,7 @@ export function longevityPage(d: LongevityPageData): Html {
   const done = new Set<MobilityItem>(d.done);
   if (d.hangLoggedToday) done.add("hang");
   const coreDone = MOBILITY_CORE.filter((k) => done.has(k)).length;
-  const json = JSON.stringify({ done: [...done] }).replace(/</g, "\\u003c");
+  const json = JSON.stringify({ done: [...done], todayHangs: d.todayHangs, bestHang: d.bestHangSeconds }).replace(/</g, "\\u003c");
   return layout(
     "Longevity · Arif Gym Tracker",
     html`<main class="longevity-page">
@@ -118,10 +119,22 @@ export function longevityPage(d: LongevityPageData): Html {
                     ${it.timer.map((m) => html`<button type="button" data-timer="${m * 60}">▶ ${m < 1 ? `${m * 60} s` : `${m} min`}</button>`)}
                   </div>`
                 : ""}
+              ${it.stopwatch
+                ? html`<div class="row">
+                    <span class="clock sw-face" aria-live="off">0 s</span>
+                    <button type="button" class="sw-go primary" style="min-width: 96px; background: var(--longevity); border-color: var(--longevity)">▶ Start</button>
+                  </div>
+                  <form class="row sw-form">
+                    <label style="display: grid; gap: 2px; font-size: 13px; color: var(--muted)">Seconds held
+                      <input name="s" class="sw-sec" inputmode="numeric" pattern="[0-9]*" maxlength="3" placeholder="0" autocomplete="off" style="width: 90px; font-size: 20px" /></label>
+                    <button type="submit" class="tick" style="align-self: end">Save</button>
+                  </form>
+                  <p class="sw-log">${hangLine(d.todayHangs, d.bestHangSeconds)}</p>`
+                : ""}
             </li>`,
           )}
         </ul>
-        <p class="muted" id="mob-msg" role="status" style="margin: 0; font-size: 13px">The first three make a mobility day. Timers tick the item when they finish.</p>
+        <p class="muted" id="mob-msg" role="status" style="margin: 0; font-size: 13px">The first three make a mobility day. The squat timer ticks it when it finishes; a saved hang ticks the hang.</p>
       </section>
 
       <section class="card" style="display: grid; gap: 10px">
@@ -157,6 +170,11 @@ export function longevityPage(d: LongevityPageData): Html {
   );
 }
 
+function hangLine(today: number[], best: number | null): string {
+  const parts = [today.length ? `Today: ${today.map((s) => `${s} s`).join(", ")}` : "", best ? `Best: ${best} s` : ""].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "Any time counts. Beat it a little each week.";
+}
+
 function fmtClock(sec: number): string {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`;
 }
@@ -164,6 +182,7 @@ function fmtClock(sec: number): string {
 const script = `
 const CORE = ${JSON.stringify(MOBILITY_CORE)};
 const data = JSON.parse(document.getElementById("lg-data").textContent);
+const hangs = { today: data.todayHangs, best: data.bestHang };
 const done = new Set(data.done);
 const msg = document.getElementById("mob-msg");
 const clock = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
@@ -202,8 +221,50 @@ async function save(li, on) {
   }
 }
 
+// Dead hang stopwatch: counts up from Start, beeps every 10 s, and Stop fills in the seconds to save.
+function unlockAudio() { try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch {} }
 document.querySelectorAll(".mob li").forEach((li) => {
-  li.querySelector(".tick").addEventListener("click", () => save(li, !done.has(li.dataset.item)));
+  const go = li.querySelector(".sw-go");
+  if (!go) return;
+  const face = li.querySelector(".sw-face"), input = li.querySelector(".sw-sec"), log = li.querySelector(".sw-log");
+  let start = 0, id = null, lastTen = 0;
+  const stop = () => {
+    clearInterval(id); id = null;
+    const s = Math.floor((Date.now() - start) / 1000);
+    face.textContent = s + " s"; input.value = String(s);
+    go.textContent = "▶ Start again";
+  };
+  go.addEventListener("click", () => {
+    if (id) return stop();
+    unlockAudio();
+    start = Date.now(); lastTen = 0; go.textContent = "■ Stop"; face.textContent = "0 s";
+    id = setInterval(() => {
+      const s = Math.floor((Date.now() - start) / 1000);
+      face.textContent = s + " s";
+      if (s >= lastTen + 10) { lastTen = s - (s % 10); beep(); }
+    }, 200);
+  });
+  li.querySelector(".sw-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (id) stop();
+    const s = Math.round(Number(input.value));
+    if (!(s >= 1 && s <= 200)) { log.textContent = "Enter the seconds you held (1 to 200)."; return; }
+    try {
+      const res = await fetch("/api/log", { method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ exercise: "dead hang", weight: 0, reps: s }) });
+      if (res.status === 401) { location.href = "/login?next=/longevity"; return; }
+      if (!res.ok) throw new Error();
+      hangs.today.push(s);
+      const record = hangs.best !== null && s > hangs.best;
+      hangs.best = Math.max(hangs.best || 0, s);
+      log.textContent = (record ? "🏆 New best! " : "Saved ✓ ") + "Today: " + hangs.today.map((x) => x + " s").join(", ") + " · Best: " + hangs.best + " s";
+      input.value = ""; face.textContent = "0 s"; go.textContent = "▶ Start";
+      if (!done.has("hang")) save(li, true);
+    } catch { log.textContent = "Couldn't save. Check your signal and try again."; }
+  });
+});
+
+document.querySelectorAll(".mob li").forEach((li) => {
+  li.querySelector(".tick:not([type=submit])").addEventListener("click", () => save(li, !done.has(li.dataset.item)));
   li.querySelectorAll("[data-timer]").forEach((b) => b.addEventListener("click", () => {
     try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch {}
     if (running) clearInterval(running.id);

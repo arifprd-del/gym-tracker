@@ -311,7 +311,35 @@ function chip(text, onTap) {
   b.onclick = onTap;
   return b;
 }
+// Stopwatch for timed exercises (hangs, carries): counts up, beeps every 10 s, and fills in the seconds.
+const sw = { start: 0, id: null, lastTen: 0 };
+function stopwatchChip() {
+  const b = chip(sw.id ? "■ Stop · " + Math.floor((Date.now() - sw.start) / 1000) + " s" : "⏱ Stopwatch", () => {
+    if (sw.id) {
+      clearInterval(sw.id); sw.id = null;
+      els.reps.value = String(Math.max(1, Math.floor((Date.now() - sw.start) / 1000)));
+      return renderHint();
+    }
+    try { walk.audio = walk.audio || new (window.AudioContext || window.webkitAudioContext)(); walk.audio.resume(); } catch {}
+    sw.start = Date.now(); sw.lastTen = 0;
+    sw.id = setInterval(() => {
+      const s = Math.floor((Date.now() - sw.start) / 1000);
+      els.reps.value = String(s);
+      const c = $("sw-chip");
+      if (c) c.textContent = "■ Stop · " + s + " s";
+      if (s >= sw.lastTen + 10) { sw.lastTen = s - (s % 10); beep(1); }
+    }, 200);
+    renderHint();
+  });
+  b.id = "sw-chip";
+  b.classList.add("long");
+  return b;
+}
 function renderHint() {
+  renderHintText();
+  if (!isCardio() && state.selected && isTimed(state.selected)) els.hint.prepend(stopwatchChip());
+}
+function renderHintText() {
   if (isCardio()) {
     if (state.cardioSelected === "interval walk") {
       const b = chip("▶ 3 × 3 timer", () => startWalk(3, 3, 5));
