@@ -330,17 +330,15 @@ test("CSV export combines sets, cardio and weigh-ins", async () => {
       { measured_on: "2026-09-21", weight_kg: 81.3 },
       { measured_on: "2026-09-14", weight_kg: 81.7 },
     ],
-    protein: [{ id: 1, logged_at: "2026-09-21T12:05:00.000Z", grams: 30 }],
   });
   assert.equal(
     csv,
     [
-      "type,date,time,name,weight_kg,reps,minutes,distance_km,rpe,note,protein_g",
-      "body weight,2026-09-14,,,81.7,,,,,,",
-      "body weight,2026-09-21,,,81.3,,,,,,",
-      "protein,2026-09-21,13:05,,,,,,,,30",
-      "set,2026-09-21,18:30,Bench Press,80,5,,,8,felt good,",
-      "cardio,2026-09-21,19:15,Treadmill,,,20,2.5,,,",
+      "type,date,time,name,weight_kg,reps,minutes,distance_km,rpe,note",
+      "body weight,2026-09-14,,,81.7,,,,,",
+      "body weight,2026-09-21,,,81.3,,,,,",
+      "set,2026-09-21,18:30,Bench Press,80,5,,,8,felt good",
+      "cardio,2026-09-21,19:15,Treadmill,,,20,2.5,,",
       "",
     ].join("\n"),
   );
@@ -594,21 +592,6 @@ test("brain training helpers", async () => {
   assert.equal(brainCheckDue("2026-09-19", "2026-09-26"), true);
 });
 
-test("protein target and daily totals", async () => {
-  const { proteinTarget, proteinByDay } = await import("./lib");
-  assert.equal(proteinTarget(81.3), 130); // 130.1 -> nearest 5
-  assert.equal(proteinTarget(75, 2), 150);
-  assert.equal(proteinTarget(null), null);
-  const days = proteinByDay(
-    [
-      { id: 1, logged_at: "2026-09-26T07:30:00.000Z", grams: 30 },
-      { id: 2, logged_at: "2026-09-26T22:30:00.000Z", grams: 20 }, // 23:30 London, same day
-      { id: 3, logged_at: "2026-09-26T23:30:00.000Z", grams: 25 }, // 00:30 next day
-    ],
-    "Europe/London",
-  );
-  assert.deepEqual([...days], [["2026-09-26", 50], ["2026-09-27", 25]]);
-});
 
 test("timed exercises: seconds, no volume, +5 s targets", async () => {
   const { isTimed, isLongevity, formatLoad, volume, beatTargets } = await import("./lib");

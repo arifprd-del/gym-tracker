@@ -11,7 +11,6 @@ export type TodayData = {
   workout: { doneToday: SplitDay | null; setsToday: number; next: SplitDay; lastOfNextAgo: string | null; nudge: string | null };
   mobility: { done: number; total: number; streak: number };
   brain: { rounds: number; streak: number };
-  protein: { today: number; target: number };
   cardio: { weekMinutes: number; goal: number; walks: number; walksGoal: number };
   sleepLastNight: number | null;
   stepsYesterday: number | null;
@@ -40,8 +39,6 @@ const styles = `
 .t-main b { font-size: 16px; }
 .t-main span { color: var(--muted); font-size: 13px; }
 .t-go { font-weight: 700; color: var(--accent); white-space: nowrap; font-size: 15px; }
-.t-protein { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; grid-column: 1 / -1; }
-.t-protein button { padding: 10px 0; font-weight: 700; border-radius: 10px; }
 .today-page h2 { margin: 6px 0 0; }
 @media (max-width: 380px) { .t-go .w { display: none; } .t-row { gap: 10px; padding: 12px 12px; } }
 `;
@@ -58,7 +55,7 @@ function row(o: { colour: string; done: boolean; title: string; status: string; 
 
 export function todayPage(d: TodayData): Html {
   const w = d.workout;
-  const daily = [d.mobility.done >= d.mobility.total, d.brain.rounds >= 2, d.protein.today >= d.protein.target];
+  const daily = [d.mobility.done >= d.mobility.total, d.brain.rounds >= 2];
   const dailyDone = daily.filter(Boolean).length;
   const weekly = [
     !d.week.weighedIn && row({ colour: "var(--accent)", done: false, title: "Weigh-in", status: "Not done yet this week", href: "/#body-weight", go: "Weigh →" }),
@@ -123,15 +120,6 @@ export function todayPage(d: TodayData): Html {
           href: "/brain",
           go: d.brain.rounds >= 2 ? "" : "Play →",
         })}
-        <div id="protein">
-          ${row({
-            colour: "var(--accent)",
-            done: d.protein.today >= d.protein.target,
-            title: "Protein",
-            status: `${d.protein.today} / ${d.protein.target} g${d.protein.today < d.protein.target ? ` · ${d.protein.target - d.protein.today} g to go` : " ✓"}`,
-            extra: html`<div class="t-protein">${[10, 20, 30, 40].map((g) => html`<button type="button" data-g="${g}">+${g} g</button>`)}</div>`,
-          })}
-        </div>
         ${row({
           colour: "var(--longevity)",
           done: d.cardio.walks >= d.cardio.walksGoal,
@@ -143,20 +131,8 @@ export function todayPage(d: TodayData): Html {
       </section>
 
       ${weekly.length ? html`<h2>This week</h2><section class="t-list">${weekly}</section>` : ""}
-      <p class="muted" id="t-msg" role="status" style="margin: 0; font-size: 13px"></p>
-    </main>
-    <script>
-      document.querySelectorAll("#protein [data-g]").forEach((b) => b.addEventListener("click", async () => {
-        const msg = document.getElementById("t-msg");
-        msg.textContent = "Saving…";
-        try {
-          const res = await fetch("/api/protein", { method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ grams: Number(b.dataset.g) }) });
-          if (res.status === 401) { location.href = "/login?next=/today"; return; }
-          if (!res.ok) throw new Error();
-          location.reload();
-        } catch { msg.textContent = "Couldn't save. Check your signal and try again."; }
-      }));
-    </script>`,
+          </main>
+`,
     html`<style>${raw(styles)}</style>`,
   );
 }

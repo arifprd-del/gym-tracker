@@ -453,28 +453,7 @@ export function stepsSummary(rows: StepsRow[], today: string) {
 // ---------------------------------------------------------------------------------------------------------------------
 // CSV export: sets, cardio and weigh-ins in one file, one row each, oldest first.
 
-// ---------------------------------------------------------------------------------------------------------------------
-// Protein
-
-export type ProteinRow = { id: number; logged_at: string; grams: number };
-export const PROTEIN_FALLBACK_G = 120;
-
-/** Daily protein target: grams per kg of body weight, rounded to 5 g; null without a weigh-in. */
-export function proteinTarget(weightKg: number | null | undefined, gramsPerKg = 1.6): number | null {
-  return weightKg ? Math.round((weightKg * gramsPerKg) / 5) * 5 : null;
-}
-
-/** Grams per local day. */
-export function proteinByDay(rows: ProteinRow[], timeZone: string): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const r of rows) {
-    const day = localDay(r.logged_at, timeZone);
-    out.set(day, (out.get(day) ?? 0) + r.grams);
-  }
-  return out;
-}
-
-export const CSV_HEADER = ["type", "date", "time", "name", "weight_kg", "reps", "minutes", "distance_km", "rpe", "note", "protein_g"];
+export const CSV_HEADER = ["type", "date", "time", "name", "weight_kg", "reps", "minutes", "distance_km", "rpe", "note"];
 
 /** One CSV cell: quoted when needed, and text that a spreadsheet would run as a formula is made inert. */
 export function csvCell(value: unknown): string {
@@ -483,7 +462,7 @@ export function csvCell(value: unknown): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export function exportCsv(input: { sets: SetRow[]; cardio: CardioRow[]; bodyWeight: BodyWeightRow[]; protein?: ProteinRow[]; timeZone: string }): string {
+export function exportCsv(input: { sets: SetRow[]; cardio: CardioRow[]; bodyWeight: BodyWeightRow[]; timeZone: string }): string {
   const time = (iso: string) =>
     new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: input.timeZone });
   // Sort key: local date, then time; weigh-ins have no time and sort first on their day.
@@ -497,10 +476,6 @@ export function exportCsv(input: { sets: SetRow[]; cardio: CardioRow[]; bodyWeig
       return { key: `${date} ${time(c.performed_at)} ${c.performed_at}`, cells: ["cardio", date, time(c.performed_at), displayName(c.activity), null, null, c.minutes, c.distance_km, null, null] };
     }),
     ...input.bodyWeight.map((b) => ({ key: `${b.measured_on} 00:00`, cells: ["body weight", b.measured_on, null, null, b.weight_kg, null, null, null, null, null] })),
-    ...(input.protein ?? []).map((p) => {
-      const date = localDay(p.logged_at, input.timeZone);
-      return { key: `${date} ${time(p.logged_at)} ${p.logged_at}`, cells: ["protein", date, time(p.logged_at), null, null, null, null, null, null, null, p.grams] };
-    }),
   ];
   rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return [CSV_HEADER.join(","), ...rows.map((r) => CSV_HEADER.map((_, i) => csvCell(r.cells[i] ?? null)).join(","))].join("\n") + "\n";
@@ -656,7 +631,6 @@ export type WeekRecap = {
   complete: boolean; // push, pull, legs, the cardio goal and a weigh-in all done (and brain days, once added)
   brain?: { days: number; goal: number };
   sleep?: { averageMinutes: number | null; nights: number };
-  protein?: { averageG: number | null; daysLogged: number; daysAtTarget: number; target: number | null };
   longevity?: { mobilityDays: number; mobilityGoal: number; intervalWalks: number; intervalWalksGoal: number };
 };
 

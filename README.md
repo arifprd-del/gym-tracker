@@ -11,7 +11,7 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
 ## What it does
 
 - **Today (`/today`):** the Home Screen app opens here. It shows today's workout (next in the rotation, or done with a
-  summary link), the mobility routine, brain training, protein with + buttons, interval walks this week, last night's
+  summary link), the mobility routine, brain training, interval walks this week, last night's
   sleep, yesterday's steps and cardio minutes. Below that are the week's open items: weigh-in, blood pressure and
   waist, the Brain Check and the monthly longevity check. Each is one tap away.
 - **Tap-to-log screen (`/log`):** Push / Pull / Legs tabs with big exercise buttons. Weight and reps are pre-filled from
@@ -66,9 +66,6 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   weekly check-in (weigh-in, Brain Check), each with its own time and days, sent only when that thing isn't done yet.
   A Cloudflare cron runs every 15 minutes; the push keys are made on first use and kept in D1, so there's nothing to
   configure. Setup: [docs/iphone-setup.md](docs/iphone-setup.md#reminders-notifications).
-- **Protein:** a dashboard card (also **Protein** on the Log screen) with +10 / +20 / +30 / +40 g buttons, your own
-  amount and undo. The daily target is 1.6 g per kg of your latest weigh-in (`PROTEIN_G_PER_KG` in `wrangler.jsonc`),
-  with a 14-day chart; the recap shows the week's average and days at target.
 - **Sleep and performance (Brain page):** compares days after nights under 7 hours with days after 7+ hours for Quick
   Glance speed, lifting strength (best estimated 1RM against each exercise's previous sessions), reaction time and
   symbol matching. Each measure is taken against your own recent level, and it needs 3 days of each kind of night
@@ -87,7 +84,7 @@ iPhone (Home Screen app)            Cloudflare Worker (Hono)                 Clo
   12-minute treadmill test with estimated VO₂max), weekly home blood pressure (NHS bands, weekly-average chart with
   the 135/85 home limit) and waist with waist-to-height ratio (NICE bands). The weekly reminder includes whatever is
   due. It's for tracking, not diagnosis.
-- **CSV export:** one file with every set, cardio session, weigh-in and protein entry (a `type` column tells them apart), in date order with local date and time.
+- **CSV export:** one file with every set, cardio session and weigh-in (a `type` column tells them apart), in date order with local date and time.
 
 Both pages need the dashboard password. The `/api/*` endpoints behind the log screen use the same signed-in session and
 accept only JSON.
