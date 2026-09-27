@@ -23,7 +23,7 @@ import {
   beatTargets,
   habitNudge,
   isIsoDate,
-  sleepMinutes,
+  sleepFromBody,
   formatSleep,
   dayStreak,
   brainCheckDue,
@@ -553,7 +553,7 @@ app.post("/sync/sleep", async (c) => {
   const denied = await syncKeyError(c);
   if (denied) return denied;
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-  const minutes = sleepMinutes(body.sleep ?? body.minutes ?? body.hours);
+  const minutes = sleepFromBody(body);
   if (minutes === null) return c.json({ message: "Send last night's sleep as a number (hours, minutes or seconds)." }, 400);
   if (minutes === 0) {
     // Usually no sleep samples matched (no sleep tracked, or the phone was locked), so don't record a night of 0.
@@ -754,7 +754,7 @@ app.get("/exercise/:name", async (c) => {
       day: button?.day ?? "other",
       sessions,
       change: progressChange(sessions),
-      stall: detectStall(sessions, localDay(new Date(), c.env.TIMEZONE)),
+      stall: isTimed(name) ? null : detectStall(sessions, localDay(new Date(), c.env.TIMEZONE)),
       today: localDay(new Date(), c.env.TIMEZONE),
     }),
     sets.results.length || button ? 200 : 404,
@@ -825,19 +825,22 @@ app.get("/longevity", async (c) => {
   );
 });
 
+/** How far back streaks are counted on Today and in reminders (the same as the dashboard's week streak can see). */
+const STREAK_DAYS = 366;
+
 // Today: everything due today on one screen.
 app.get("/today", async (c) => {
   const timeZone = c.env.TIMEZONE;
   const now = new Date();
   const today = localDay(now, timeZone);
   const thisWeek = weekStart(today);
-  const since = new Date(`${addDays(today, -61)}T00:00:00Z`).toISOString();
+  const since = new Date(`${addDays(today, -STREAK_DAYS)}T00:00:00Z`).toISOString();
   const weekSince = new Date(`${addDays(thisWeek, -1)}T00:00:00Z`).toISOString();
   const [sets, cardio, exercises, mobilityRows, rounds, lastCheck, weighIn, sleepRow, stepsRow, bp, waistRow, tests] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ?").bind(since).all<SetRow>(),
     c.env.DB.prepare("SELECT * FROM cardio WHERE performed_at >= ?").bind(since).all<CardioRow>(),
     c.env.DB.prepare("SELECT name, day FROM exercises").all<ExerciseButton>(),
-    c.env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ?").bind(addDays(today, -61)).all<{ day: string; item: string }>(),
+    c.env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ?").bind(addDays(today, -STREAK_DAYS)).all<{ day: string; item: string }>(),
     c.env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ?").bind(since).all<{ performed_at: string }>(),
     c.env.DB.prepare("SELECT performed_at FROM brain_checks ORDER BY performed_at DESC LIMIT 1").first<{ performed_at: string }>(),
     c.env.DB.prepare("SELECT 1 AS ok FROM body_weight WHERE measured_on >= ? AND measured_on <= ?").bind(thisWeek, today).first(),
@@ -1103,6 +1106,8 @@ app.post("/body-weight/:date/delete", async (c) => {
   return c.redirect("/#body-weight");
 });
 
+const DEFAULT_REMINDER_TIMES: Record<ReminderKey, string> = { gym: "17:30", mobility: "08:30", brain: "20:00", weekly: "10:00" };
+
 // Reminder settings and this phone's notifications.
 app.get("/reminders", async (c) => {
   const [rules, keys, devices] = await Promise.all([
@@ -1117,11 +1122,12 @@ app.post("/reminders", async (c) => {
   const body = await c.req.parseBody({ all: true });
   const list = (v: unknown) => (Array.isArray(v) ? v : v === undefined ? [] : [v]).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
   const updates = REMINDER_KEYS.map((key) => {
-    const time = body[`${key}_time`];
+    const raw = body[`${key}_time`];
+    const time = typeof raw === "string" ? raw.slice(0, 5) : raw; // some browsers send HH:MM:SS
     const days = [...new Set(list(body[`${key}_days`]))].sort();
     return c.env.DB.prepare("UPDATE reminders SET enabled = ?, time = ?, days = ? WHERE key = ?").bind(
       body[`${key}_enabled`] ? 1 : 0,
-      isTime(time) ? time : key === "brain" ? "20:00" : key === "gym" ? "17:30" : "10:00",
+      isTime(time) ? time : DEFAULT_REMINDER_TIMES[key],
       days.join(","),
       key,
     );
@@ -1210,7 +1216,7 @@ async function pushToAll(
 /** What the reminders check against: today's training, brain rounds, weigh-in and Brain Check. */
 async function loadReminderState(env: Env, today: string): Promise<ReminderState> {
   const timeZone = env.TIMEZONE;
-  const since = new Date(`${addDays(today, -61)}T00:00:00Z`).toISOString();
+  const since = new Date(`${addDays(today, -STREAK_DAYS)}T00:00:00Z`).toISOString();
   const thisWeek = weekStart(today);
   const [sets, cardio, exercises, weighIn, rounds, lastCheck] = await Promise.all([
     env.DB.prepare("SELECT * FROM sets WHERE performed_at >= ?").bind(since).all<SetRow>(),
@@ -1220,7 +1226,7 @@ async function loadReminderState(env: Env, today: string): Promise<ReminderState
     env.DB.prepare("SELECT performed_at FROM speed_rounds WHERE performed_at >= ?").bind(since).all<{ performed_at: string }>(),
     env.DB.prepare("SELECT performed_at FROM brain_checks ORDER BY performed_at DESC LIMIT 1").first<{ performed_at: string }>(),
   ]);
-  const mobility = mobilityDays((await env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ?").bind(addDays(today, -61)).all<{ day: string; item: string }>()).results);
+  const mobility = mobilityDays((await env.DB.prepare("SELECT day, item FROM mobility WHERE day >= ?").bind(addDays(today, -STREAK_DAYS)).all<{ day: string; item: string }>()).results);
   const days = trainingDaysByType(sets.results, dayLookup(exercises.results), timeZone);
   const activeDays = new Set([...days.keys(), ...cardioMinutesPerDay(cardio.results, timeZone).keys()]);
   const plan = todaysPlan(days, today);
@@ -1235,7 +1241,7 @@ async function loadReminderState(env: Env, today: string): Promise<ReminderState
     brainStreak: dayStreak(roundDays, today),
     weighedInThisWeek: Boolean(weighIn),
     brainCheckDue: brainCheckDue(lastCheck ? localDay(lastCheck.performed_at, timeZone) : null, today),
-    bpThisWeek: Boolean(await env.DB.prepare("SELECT 1 AS ok FROM blood_pressure WHERE measured_at >= ?").bind(new Date(`${addDays(thisWeek, -1)}T00:00:00Z`).toISOString()).first()),
+    bpThisWeek: (await env.DB.prepare("SELECT measured_at FROM blood_pressure WHERE measured_at >= ?").bind(new Date(`${addDays(thisWeek, -1)}T00:00:00Z`).toISOString()).all<{ measured_at: string }>()).results.some((r) => localDay(r.measured_at, timeZone) >= thisWeek),
     fitnessCheckDue: fitnessCheckDue(
       Object.fromEntries((await env.DB.prepare("SELECT test, MAX(day) AS day FROM fitness_tests GROUP BY test").all<{ test: FitnessTest; day: string }>()).results.map((t) => [t.test, t.day])),
       today,
@@ -1262,7 +1268,7 @@ async function runReminders(env: Env, now = new Date()): Promise<void> {
 // ---------------------------------------------------------------------------------------------------------------------
 // Backups (weekly cron, see wrangler.jsonc): every table as SQL into KV, keeping the newest 12.
 
-const BACKUP_CRON = "17 3 * * 0";
+const BACKUP_CRON = "17 3 * * SUN"; // Cloudflare numbers weekdays 1-7 from Sunday, so use the name
 type BackupMeta = { rows: number; bytes: number; createdAt: string };
 
 async function runBackup(env: Env, now = new Date()): Promise<{ key: string; meta: BackupMeta }> {
@@ -1273,6 +1279,8 @@ async function runBackup(env: Env, now = new Date()): Promise<{ key: string; met
   for (const { name } of tables) {
     const { results } = await env.DB.prepare(`SELECT * FROM "${name.replace(/"/g, '""')}"`).all<Record<string, unknown>>();
     // The push key pair stays out of backups; after a restore, notifications are simply turned on again.
+    // Push subscriptions only work with that key pair, so they're left out too.
+    if (name === "push_subscriptions") continue;
     dumps.push({ name, rows: name === "settings" ? results.filter((r) => r.key !== "vapid_keys") : results });
   }
   const createdAt = now.toISOString();

@@ -115,6 +115,8 @@ test("session refresh and sign-in redirects", async () => {
   assert.equal(sessionNeedsRefresh(cookie, now + 8 * 24 * 60 * 60 * 1000), true); // renewed after a week
   assert.equal(safeNextPath("/log"), "/log");
   assert.equal(safeNextPath("//evil.example"), "/");
+  assert.equal(safeNextPath("/\t/evil.example"), "/"); // browsers drop the tab, leaving //evil.example
+  assert.equal(safeNextPath("/\n/evil.example"), "/");
   assert.equal(safeNextPath("https://evil.example"), "/");
   assert.equal(safeNextPath("/\\evil.example"), "/");
   assert.equal(safeNextPath(undefined), "/");
@@ -613,4 +615,24 @@ test("mobility days need the whole home routine", async () => {
     { day: "2026-09-27", item: "squat" }, { day: "2026-09-27", item: "hang" },
   ];
   assert.deepEqual([...mobilityDays(rows)], ["2026-09-26"]);
+});
+
+test("review fixes: sleep units, CSV order when the clocks go back", async () => {
+  const { sleepFromBody, exportCsv } = await import("./lib");
+  assert.equal(sleepFromBody({ minutes: 20 }), 20); // not 20 hours
+  assert.equal(sleepFromBody({ hours: 7.5 }), 450);
+  assert.equal(sleepFromBody({ sleep: 7.5 }), 450);
+  assert.equal(sleepFromBody({ sleep: 27000 }), 450); // seconds
+  assert.equal(sleepFromBody({ minutes: 2000 }), null);
+  // 25 Oct 2026: 01:30 BST (00:30Z) comes before 01:10 GMT (01:10Z).
+  const csv = exportCsv({
+    timeZone: "Europe/London",
+    sets: [
+      { id: 2, performed_at: "2026-10-25T01:10:00.000Z", exercise: "b", weight_kg: 1, reps: 1, rpe: null, note: null },
+      { id: 1, performed_at: "2026-10-25T00:30:00.000Z", exercise: "a", weight_kg: 1, reps: 1, rpe: null, note: null },
+    ],
+    cardio: [],
+    bodyWeight: [],
+  });
+  assert.deepEqual(csv.trim().split("\n").slice(1).map((l) => l.split(",")[3]), ["A", "B"]);
 });

@@ -42,9 +42,14 @@ export function sessionNeedsRefresh(cookie: string, now = Date.now()): boolean {
   return expires - now < (SESSION_DAYS - 7) * 24 * 60 * 60 * 1000;
 }
 
-/** Only same-site paths are allowed after sign-in, so the login form cannot redirect elsewhere. */
+/**
+ * Only same-site paths are allowed after sign-in, so the login form cannot redirect elsewhere. Control characters are
+ * refused too: browsers drop tabs and newlines from URLs, which would turn "/<tab>/evil.example" into "//evil.example".
+ */
 export function safeNextPath(next: unknown): string {
-  return typeof next === "string" && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/";
+  return typeof next === "string" && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") && !/[\x00-\x1f\x7f]/.test(next)
+    ? next
+    : "/";
 }
 
 /** Hex SHA-256, used to store the steps sync key without keeping the key itself. */

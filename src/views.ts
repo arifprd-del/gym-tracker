@@ -783,9 +783,13 @@ export function exercisePage(d: ExercisePageData): Html {
   const bestE1rm = sessions.reduce<ExerciseSession | null>((b, s) => (!b || s.bestE1rm > b.bestE1rm ? s : b), null);
   const totalSets = sessions.reduce((n, s) => n + s.sets.length, 0);
   const last = sessions[sessions.length - 1];
+  // Timed exercises (hangs, carries): "reps" are seconds, and there's no 1RM (carries track the heaviest weight).
+  const timed = isTimed(d.name);
+  const repUnit = timed ? "s" : "reps";
   const change = d.change
-    ? `${d.change.change > 0 ? "+" : d.change.change < 0 ? "−" : "±"}${bodyweight ? Math.abs(d.change.change) : formatKg(Math.abs(d.change.change))} ${bodyweight ? "reps" : "kg"}`
+    ? `${d.change.change > 0 ? "+" : d.change.change < 0 ? "−" : "±"}${bodyweight ? Math.abs(d.change.change) : formatKg(Math.abs(d.change.change))} ${bodyweight ? repUnit : "kg"}`
     : "–";
+  const setText = (x: { weight: number; reps: number }) => (x.weight > 0 ? `${formatKg(x.weight)}×${x.reps}${timed ? "s" : ""}` : `${x.reps}${timed ? " s" : ""}`);
   const stat = (value: string, label: string) => html`<div class="stat"><b>${value}</b><span>${label}</span></div>`;
   return layout(
     `${title} · Arif Gym Tracker`,
@@ -805,16 +809,16 @@ export function exercisePage(d: ExercisePageData): Html {
         : html`${d.stall ? stallBanner(d.stall) : ""}
             <section class="stats compact" aria-label="Summary">
               ${bodyweight
-                ? stat(`${best!.bestReps} reps`, `best set · ${shortDate(best!.day)}`)
-                : stat(`${formatKg(best!.topWeight)} kg × ${best!.bestReps}`, `best set · ${shortDate(best!.day)}`)}
-              ${bodyweight ? "" : stat(`${formatKg(bestE1rm!.bestE1rm)} kg`, `best est. 1RM · ${shortDate(bestE1rm!.day)}`)}
+                ? stat(`${best!.bestReps} ${repUnit}`, `best set · ${shortDate(best!.day)}`)
+                : stat(formatLoad({ weight_kg: best!.topWeight, reps: best!.bestReps, exercise: d.name }), `best set · ${shortDate(best!.day)}`)}
+              ${bodyweight || timed ? "" : stat(`${formatKg(bestE1rm!.bestE1rm)} kg`, `best est. 1RM · ${shortDate(bestE1rm!.day)}`)}
               ${stat(change, d.change ? `since ${shortDate(d.change.since)}` : "change (needs 2 sessions)")}
               ${stat(String(sessions.length), `sessions · ${totalSets} sets`)}
               ${stat(daysAgo(last.day, d.today).replace(/^(\d+) days ago$/, "$1d ago"), `last done · ${shortDate(last.day)}`)}
             </section>
 
             <section class="card">
-              <h2>${bodyweight ? "Best reps" : "Strength (est. 1RM)"}</h2>
+              <h2>${bodyweight ? (timed ? "Longest hold (s)" : "Best reps") : timed ? "Heaviest weight (kg)" : "Strength (est. 1RM)"}</h2>
               ${progressChart(sessions, bodyweight, colour, d.name)}
             </section>
 
@@ -825,8 +829,8 @@ export function exercisePage(d: ExercisePageData): Html {
                 ${[...sessions].reverse().map(
                   (s) => html`<tr>
                     <td>${shortDate(s.day)}${s.record ? " 🏆" : ""}</td>
-                    <td class="sets">${s.sets.map((x) => (x.weight > 0 ? `${formatKg(x.weight)}×${x.reps}` : `${x.reps}`)).join(", ")}</td>
-                    <td class="num">${s.volumeKg > 0 ? `${Math.round(s.volumeKg).toLocaleString("en-GB")} kg` : `${s.sets.reduce((n, x) => n + x.reps, 0)} reps`}</td>
+                    <td class="sets">${s.sets.map(setText).join(", ")}</td>
+                    <td class="num">${s.volumeKg > 0 ? `${Math.round(s.volumeKg).toLocaleString("en-GB")} kg` : `${s.sets.reduce((n, x) => n + x.reps, 0)} ${repUnit}`}</td>
                   </tr>`,
                 )}
               </table>
@@ -989,7 +993,7 @@ export function summaryPage(s: WorkoutSummary, today: string, targets: Record<st
                 (e) => html`<tr>
                   <td><a class="plain" href="${exerciseHref(e.exercise)}"><b>${displayName(e.exercise)}</b></a>${e.record ? " 🏆" : ""}</td>
                   <td class="sets">
-                    ${e.sets.map((x) => (x.weight > 0 ? `${formatKg(x.weight)}×${x.reps}` : `${x.reps}`)).join(", ")}
+                    ${e.sets.map((x) => (x.weight > 0 ? `${formatKg(x.weight)}×${x.reps}${isTimed(e.exercise) ? "s" : ""}` : `${x.reps}${isTimed(e.exercise) ? " s" : ""}`)).join(", ")}
                     ${targets[e.exercise]
                       ? html`<br /><span style="font-size: 12px">target ${formatTarget(targets[e.exercise]!)} · ${e.sets.length}/${targets[e.exercise]!.sets}${e.sets.length >= targets[e.exercise]!.sets ? " ✓" : ""}</span>`
                       : ""}

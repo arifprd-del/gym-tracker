@@ -465,17 +465,18 @@ export function csvCell(value: unknown): string {
 export function exportCsv(input: { sets: SetRow[]; cardio: CardioRow[]; bodyWeight: BodyWeightRow[]; timeZone: string }): string {
   const time = (iso: string) =>
     new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: input.timeZone });
-  // Sort key: local date, then time; weigh-ins have no time and sort first on their day.
+  // Sort key: local date, then the UTC timestamp (local times repeat when the clocks go back); weigh-ins have no time
+  // and sort first on their day.
   const rows: { key: string; cells: unknown[] }[] = [
     ...input.sets.map((s) => {
       const date = localDay(s.performed_at, input.timeZone);
-      return { key: `${date} ${time(s.performed_at)} ${s.performed_at}`, cells: ["set", date, time(s.performed_at), displayName(s.exercise), s.weight_kg, s.reps, null, null, s.rpe, s.note] };
+      return { key: `${date} ${s.performed_at}`, cells: ["set", date, time(s.performed_at), displayName(s.exercise), s.weight_kg, s.reps, null, null, s.rpe, s.note] };
     }),
     ...input.cardio.map((c) => {
       const date = localDay(c.performed_at, input.timeZone);
-      return { key: `${date} ${time(c.performed_at)} ${c.performed_at}`, cells: ["cardio", date, time(c.performed_at), displayName(c.activity), null, null, c.minutes, c.distance_km, null, null] };
+      return { key: `${date} ${c.performed_at}`, cells: ["cardio", date, time(c.performed_at), displayName(c.activity), null, null, c.minutes, c.distance_km, null, null] };
     }),
-    ...input.bodyWeight.map((b) => ({ key: `${b.measured_on} 00:00`, cells: ["body weight", b.measured_on, null, null, b.weight_kg, null, null, null, null, null] })),
+    ...input.bodyWeight.map((b) => ({ key: `${b.measured_on} `, cells: ["body weight", b.measured_on, null, null, b.weight_kg, null, null, null, null, null] })),
   ];
   rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return [CSV_HEADER.join(","), ...rows.map((r) => CSV_HEADER.map((_, i) => csvCell(r.cells[i] ?? null)).join(","))].join("\n") + "\n";
@@ -866,6 +867,16 @@ export function sleepMinutes(value: unknown): number | null {
   else if (n <= 86_400) minutes = n / 60; // seconds
   else return null;
   return Math.round(minutes);
+}
+
+/** Minutes of sleep from a sync body: "sleep" is auto-detected (hours, minutes or seconds); "minutes" and "hours" mean exactly that. */
+export function sleepFromBody(body: Record<string, unknown>): number | null {
+  if (body.sleep !== undefined) return sleepMinutes(body.sleep);
+  const explicit = (v: unknown, perUnit: number) => {
+    const n = typeof v === "number" ? v : typeof v === "string" ? Number(v.trim()) : NaN;
+    return Number.isFinite(n) && n >= 0 && n * perUnit <= 1440 ? Math.round(n * perUnit) : null;
+  };
+  return body.minutes !== undefined ? explicit(body.minutes, 1) : explicit(body.hours, 60);
 }
 
 /** "7 h 24 min", "6 h", "45 min". */
